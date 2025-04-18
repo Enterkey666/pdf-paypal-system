@@ -1,0 +1,86 @@
+/* カスタムスタイル */
+.drag-area {
+    border: 2px dashed #ccc;
+    border-radius: 5px;
+    padding: 25px;
+    text-align: center;
+    margin: 20px 0;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.drag-area.active {
+    border-color: #007bff;
+    background-color: rgba(0, 123, 255, 0.05);
+}
+
+.file-list {
+    margin-top: 15px;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.file-delete {
+    margin-left: 10px;
+    color: #dc3545;
+    cursor: pointer;
+}
+
+.payment-link {
+    word-break: break-all;
+}
+
+.mode-badge {
+    font-size: 0.8em;
+    padding: 3px 8px;
+    border-radius: 10px;
+    margin-left: 10px;
+}
+
+.sandbox {
+    background-color: #ffc107;
+    color: #000;
+}
+
+.live {
+    background-color: #dc3545;
+    color: #fff;
+}
+
+.copy-btn {
+    transition: all 0.2s ease;
+}
+
+/* 処理中表示 */
+.btn-success:disabled {
+    background-color: #28a745;
+    border-color: #28a745;
+    opacity: 0.85;
+}
+
+#button-text.processing {
+    visibility: hidden;
+}
+
+.drag-area.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* モバイル対応 */
+@media (max-width: 768px) {
+    .table-responsive {
+        font-size: 0.9rem;
+    }
+    
+    .btn-sm {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.7rem;
+    }
+}

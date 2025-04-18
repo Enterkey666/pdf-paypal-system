@@ -1,0 +1,23 @@
+{
+  "PAYPAL_CLIENT_ID": "your_paypal_client_id_here",
+  "PAYPAL_CLIENT_SECRET": "your_paypal_client_secret_here",
+  "PAYPAL_MODE": "sandbox",
+  "DEFAULT_CURRENCY": "JPY",
+  "SECRET_KEY": "your_secret_key_here",
+  "ENABLE_CSRF_PROTECTION": true,
+  "ENABLE_SECURE_HEADERS": true,
+  "SESSION_LIFETIME": 30,
+  "APP_NAME": "PDF一括処理 & PayPal決済リンク発行システム",
+  "DEBUG": false,
+  "MAX_CONTENT_LENGTH": 16777216,
+  "ALLOWED_EXTENSIONS": [
+    "pdf"
+  ],
+  "paypal_mode": "sandbox",
+  "paypal_client_id": "your_paypal_client_id_here",
+  "paypal_client_secret": "your_paypal_client_secret_here",
+  "default_currency": "JPY",
+  "enable_customer_extraction": "1",
+  "enable_amount_extraction": "1",
+  "default_amount": 1000
+}
