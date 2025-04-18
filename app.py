@@ -180,7 +180,7 @@ def create_paypal_payment_link(amount, currency="JPY", description=""):
             "Authorization": f"Bearer {access_token}"
         }
             
-        # 最小限のペイロードで確実に成功させる
+        # ゲスト決済を確実に有効にするペイロード
         host_url = request.host_url.rstrip('/')
         payload = {
             "intent": "CAPTURE",
@@ -189,10 +189,15 @@ def create_paypal_payment_link(amount, currency="JPY", description=""):
                     "amount": {
                         "currency_code": currency,
                         "value": amount_str
-                    }
+                    },
+                    "description": description
                 }
             ],
             "application_context": {
+                "brand_name": "PDF処理システム",
+                "landing_page": "BILLING",  # BILLINGを指定してクレジットカード入力画面を優先表示
+                "shipping_preference": "NO_SHIPPING",
+                "user_action": "PAY_NOW",
                 "return_url": f"{host_url}/payment-success",
                 "cancel_url": f"{host_url}/payment-cancel"
             }
@@ -252,16 +257,27 @@ def create_paypal_payment_link(amount, currency="JPY", description=""):
                     if "checkout" in link["href"] or "payer-action" == link["rel"]:
                         return link["href"]
             
-            # IDから正確な支払いURLを直接生成 - 必ずチェックアウト画面が表示されるように
+            # IDから正確な支払いURLを生成 - ゲスト決済を確実に有効化
             if "id" in response_data:
                 # sandboxか本番かでドメインを選択
                 domain = "sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "www.paypal.com"
-                # 支払い画面を直接開くための正しいURL形式
-                # checkout_url = f"https://www.{domain}/checkoutnow?token={response_data['id']}"
-                checkout_url = f"https://www.{domain}/webapps/hermes?token={response_data['id']}&useraction=commit"
-                print(f"手動作成した決済URL: {checkout_url}")
-                # order_idパラメータを追加して自動キャプチャができるように
+                
+                # 最新のPayPalゲスト決済フローを使用
+                checkout_url = f"https://{domain}/checkoutnow?token={response_data['id']}"
+                
+                # 重要なパラメータを追加
+                checkout_url += "&useraction=commit"  # 支払いボタンを表示
+                checkout_url += "&buyer-country=JP"   # 日本向け設定
+                checkout_url += "&locale.x=ja_JP"     # 日本語表示
+                
+                # ゲスト決済を強制的に有効化
+                checkout_url += "&fundingSource=card"  # カード決済を優先
+                checkout_url += "&forceGuestCheckout=true"  # ゲスト決済を強制
+                
+                # キャプチャ用のorder_idを追加
                 checkout_url += f"&order_id={response_data['id']}"
+                
+                print(f"改善されたゲスト決済URL: {checkout_url}")
                 return checkout_url
                 
         except requests.exceptions.RequestException as req_error:
@@ -553,6 +569,7 @@ def settings():
 @app.route('/settings/save', methods=['POST'])
 def save_settings():
     """設定を保存する"""
+    global PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE, API_BASE
     try:
         # フォームからデータ取得
         form_data = request.form.to_dict()
@@ -569,6 +586,15 @@ def save_settings():
         
         # 設定保存
         if save_config(current_settings):
+            # グローバル変数を更新
+            PAYPAL_CLIENT_ID = current_settings.get('paypal_client_id', '')
+            PAYPAL_CLIENT_SECRET = current_settings.get('paypal_client_secret', '')
+            PAYPAL_MODE = current_settings.get('paypal_mode', 'sandbox')
+            
+            # APIベースURLを更新
+            API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+            
+            logger.info(f"設定保存完了 - モード: {PAYPAL_MODE}, APIベース: {API_BASE}")
             return redirect(url_for('settings', message='設定を保存しました', message_type='success'))
         else:
             return redirect(url_for('settings', message='設定の保存に失敗しました', message_type='danger'))
@@ -580,7 +606,21 @@ def save_settings():
 @app.route('/settings/test_connection')
 def test_connection():
     """設定されたPayPal API認証情報で接続テストを実行する"""
+    global PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_MODE, API_BASE
     try:
+        # 最新の設定を読み込み
+        current_config = get_config()
+        
+        # グローバル変数を更新
+        PAYPAL_CLIENT_ID = current_config.get('paypal_client_id', '')
+        PAYPAL_CLIENT_SECRET = current_config.get('paypal_client_secret', '')
+        PAYPAL_MODE = current_config.get('paypal_mode', 'sandbox')
+        
+        # APIベースURLを更新
+        API_BASE = "https://api-m.sandbox.paypal.com" if PAYPAL_MODE == "sandbox" else "https://api-m.paypal.com"
+        
+        logger.info(f"PayPal接続テスト - モード: {PAYPAL_MODE}, APIベース: {API_BASE}")
+        
         if config_manager.test_paypal_connection():
             return redirect(url_for('settings', message='PayPal API接続テスト成功', message_type='success'))
         else:
