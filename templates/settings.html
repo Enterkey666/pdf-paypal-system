@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>設定 - PDF処理 & PayPal決済リンク発行システム</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .settings-card {
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #f1f8ff;
+            border-bottom: 1px solid #dee2e6;
+            border-radius: 15px 15px 0 0 !important;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        .btn-save {
+            background-color: #0070ba;
+            border-color: #0070ba;
+        }
+        .btn-save:hover {
+            background-color: #005ea6;
+            border-color: #005ea6;
+        }
+        .status-badge {
+            font-size: 0.8rem;
+            padding: 0.4rem 0.7rem;
+        }
+        .tooltip-icon {
+            cursor: help;
+            color: #6c757d;
+        }
+        .api-status {
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="bi bi-house"></i> ホーム</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-5">
+        <h2 class="mb-4"><i class="bi bi-gear"></i> システム設定</h2>
+        
+        {% if message %}
+        <div class="alert alert-{{ message_type }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endif %}
+        
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-paypal text-primary"></i> PayPal API 設定
+                            {% if paypal_status %}
+                            <span class="badge bg-success status-badge float-end">接続済み</span>
+                            {% else %}
+                            <span class="badge bg-warning status-badge float-end">未接続</span>
+                            {% endif %}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form action="/settings/save" method="post" id="settings-form">
+                            <div class="form-group">
+                                <label for="paypal_mode">
+                                    環境モード
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="開発中はsandboxを選択してください。本番環境では実際の取引が行われます。"></i>
+                                </label>
+                                <select class="form-select" id="paypal_mode" name="paypal_mode">
+                                    <option value="sandbox" {% if current_settings.paypal_mode == 'sandbox' %}selected{% endif %}>Sandbox (テスト環境)</option>
+                                    <option value="live" {% if current_settings.paypal_mode == 'live' %}selected{% endif %}>Live (本番環境)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="paypal_client_id">
+                                    PayPal Client ID
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="PayPalデベロッパーダッシュボードで取得できるClient IDです。"></i>
+                                </label>
+                                <input type="text" class="form-control" id="paypal_client_id" name="paypal_client_id" 
+                                       value="{{ current_settings.paypal_client_id }}" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="paypal_client_secret">
+                                    PayPal Client Secret
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="PayPalデベロッパーダッシュボードで取得できるClient Secretです。"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="paypal_client_secret" name="paypal_client_secret" 
+                                           value="{{ current_settings.paypal_client_secret }}" required>
+                                    <div class="input-group-text">
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="checkbox" id="show_secret">
+                                            <label class="form-check-label" for="show_secret">表示</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <hr>
+                            
+                            <div class="form-group">
+                                <label for="default_currency">デフォルト通貨</label>
+                                <select class="form-select" id="default_currency" name="default_currency">
+                                    <option value="JPY" {% if current_settings.default_currency == 'JPY' %}selected{% endif %}>日本円 (JPY)</option>
+                                    <option value="USD" {% if current_settings.default_currency == 'USD' %}selected{% endif %}>米ドル (USD)</option>
+                                    <option value="EUR" {% if current_settings.default_currency == 'EUR' %}selected{% endif %}>ユーロ (EUR)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="use_ai_ocr">
+                                    AI OCR機能
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="AI搭載OCR機能を使用して請求書からの情報抽出精度を向上させます。"></i>
+                                </label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="use_ai_ocr" name="use_ai_ocr" {% if use_ai_ocr %}checked{% endif %}>
+                                    <label class="form-check-label" for="use_ai_ocr">AI OCR機能を有効にする</label>
+                                </div>
+                            </div>
+                            
+                            <div id="ocr_settings" class="{% if not use_ai_ocr %}d-none{% endif %}">
+                                <div class="form-group">
+                                    <label for="ocr_method">OCR方式</label>
+                                    <select class="form-select" id="ocr_method" name="ocr_method">
+                                        <option value="tesseract" {% if ocr_method == 'tesseract' %}selected{% endif %}>Tesseract OCR (ローカル実行)</option>
+                                        <option value="google_vision" {% if ocr_method == 'google_vision' %}selected{% endif %}>Google Cloud Vision API</option>
+                                        <option value="azure_form_recognizer" {% if ocr_method == 'azure_form_recognizer' %}selected{% endif %}>Microsoft Azure Form Recognizer</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="ocr_api_key">
+                                        API キー
+                                        <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                           title="選択したOCR方式のAPIキーを入力してください。Tesseractの場合は不要です。"></i>
+                                    </label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="ocr_api_key" name="ocr_api_key" 
+                                               value="{{ ocr_api_key }}">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="show_ocr_api_key">
+                                                <label class="form-check-label" for="show_ocr_api_key">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="ocr_endpoint">
+                                        APIエンドポイント
+                                        <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                           title="Azure Form RecognizerなどのAPIエンドポイントを入力してください。Google Cloud VisionやTesseractの場合は空欄でかまいません。"></i>
+                                    </label>
+                                    <input type="text" class="form-control" id="ocr_endpoint" name="ocr_endpoint" 
+                                           value="{{ ocr_endpoint }}">
+                                </div>
+                            </div>
+                            
+                            <hr>
+                            
+                            <div class="form-group">
+                                <label for="enable_customer_extraction">顧客名抽出</label>
+                                <select class="form-select" id="enable_customer_extraction" name="enable_customer_extraction">
+                                    <option value="1" {% if current_settings.enable_customer_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if current_settings.enable_customer_extraction == '0' %}selected{% endif %}>無効</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="enable_amount_extraction">請求金額抽出</label>
+                                <select class="form-select" id="enable_amount_extraction" name="enable_amount_extraction">
+                                    <option value="1" {% if current_settings.enable_amount_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if current_settings.enable_amount_extraction == '0' %}selected{% endif %}>無効</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="default_amount">金額抽出失敗時のデフォルト額（円）</label>
+                                <input type="number" class="form-control" id="default_amount" name="default_amount" 
+                                       value="{{ current_settings.default_amount|default(1000) }}">
+                            </div>
+                            
+                            <!-- 保存ボタンを設定の下に追加 -->
+                            <div class="d-grid gap-2 mt-4">
+                                <button type="submit" class="btn btn-save text-white" form="settings-form">
+                                    <i class="bi bi-save"></i> すべての設定を保存
+                                </button>
+                            </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-4">
+                </form> <!-- メインフォームの終了タグ -->
+
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> システム情報</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>アプリケーションバージョン:</strong> 1.0.0</p>
+                        <p><strong>最終更新日:</strong> 2025年4月18日</p>
+                        
+                        <hr>
+                        
+                        <h6>API状態</h6>
+                        <div class="api-status">
+                            <p>
+                                <i class="bi {% if paypal_status %}bi-check-circle-fill text-success{% else %}bi-x-circle-fill text-danger{% endif %}"></i>
+                                PayPal API: {% if paypal_status %}接続済み{% else %}未接続{% endif %}
+                            </p>
+                        </div>
+                        
+                        <hr>
+                        
+                        <a href="/export_settings" class="btn btn-sm btn-outline-secondary w-100 mb-2">
+                            <i class="bi bi-download"></i> 設定のエクスポート
+                        </a>
+                        <a href="#" class="btn btn-sm btn-outline-secondary w-100" data-bs-toggle="modal" data-bs-target="#importModal">
+                            <i class="bi bi-upload"></i> 設定のインポート
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-question-circle"></i> ヘルプ</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>PayPal APIキーの取得方法:</strong></p>
+                        <ol>
+                            <li><a href="https://developer.paypal.com/" target="_blank">PayPalデベロッパーポータル</a>にログイン</li>
+                            <li>「Dashboard」から「My Apps & Credentials」を選択</li>
+                            <li>APIキー（Client IDとSecret）を作成または確認</li>
+                        </ol>
+                        
+                        <p><strong>AI OCR APIの取得方法:</strong></p>
+                        <ul>
+                            <li><a href="https://cloud.google.com/vision" target="_blank">Google Cloud Vision API</a> - 高精度な日本語OCR</li>
+                            <li><a href="https://azure.microsoft.com/ja-jp/products/form-recognizer" target="_blank">Azure Form Recognizer</a> - 請求書に特化したAI</li>
+                            <li><a href="https://github.com/tesseract-ocr/tesseract" target="_blank">Tesseract OCR</a> - オープンソース（APIキー不要）</li>
+                        </ul>
+                        
+                        <p><a href="https://github.com/user/pdf-stripe-batch" target="_blank" class="text-decoration-none">
+                            <i class="bi bi-github"></i> プロジェクトリポジトリ
+                        </a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 保存ボタンは設定の下に移動したのでここは削除 -->
+    
+    <!-- インポートモーダル -->
+    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">設定のインポート</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form action="/import_settings" method="post" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="settings_file" class="form-label">設定ファイル (.json)</label>
+                            <input class="form-control" type="file" id="settings_file" name="settings_file" accept=".json">
+                        </div>
+                        <div class="text-end">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                            <button type="submit" class="btn btn-primary">インポート</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ツールチップの初期化
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        
+        // パスワード表示/非表示の切り替え
+        document.getElementById('show_secret').addEventListener('change', function() {
+            var secretField = document.getElementById('paypal_client_secret');
+            secretField.type = this.checked ? 'text' : 'password';
+        });
+        
+        // OCR APIキー表示/非表示の切り替え
+        document.getElementById('show_ocr_api_key').addEventListener('change', function() {
+            var apiKeyField = document.getElementById('ocr_api_key');
+            apiKeyField.type = this.checked ? 'text' : 'password';
+        });
+        
+        // AI OCR設定の表示/非表示切り替え
+        document.getElementById('use_ai_ocr').addEventListener('change', function() {
+            var ocrSettings = document.getElementById('ocr_settings');
+            if (this.checked) {
+                ocrSettings.classList.remove('d-none');
+            } else {
+                ocrSettings.classList.add('d-none');
+            }
+        });
+    </script>
+</body>
+</html>

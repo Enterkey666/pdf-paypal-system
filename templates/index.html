@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF一括処理 & PayPal決済リンク発行</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <!-- Bootstrap JavaScriptを先読みで読み込み -->
+    <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        .drag-area {
+            border: 2px dashed #ccc;
+            border-radius: 5px;
+            padding: 25px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+        }
+        .drag-area.active {
+            border-color: #007bff;
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        .file-list {
+            margin-top: 15px;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 5px 0;
+        }
+        .file-delete {
+            margin-left: 10px;
+            color: #dc3545;
+            cursor: pointer;
+        }
+        .mode-badge {
+            font-size: 0.8em;
+            padding: 3px 8px;
+            border-radius: 10px;
+            margin-left: 10px;
+        }
+        .sandbox {
+            background-color: #ffc107;
+            color: #000;
+        }
+        .live {
+            background-color: #dc3545;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク発行システム
+                {% if paypal_mode == 'live' %}
+                <span class="mode-badge live">本番</span>
+                {% endif %}
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/"><i class="bi bi-house"></i> ホーム</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <header class="pb-3 mb-4 border-bottom">
+            <div class="d-flex align-items-center">
+                <h1 class="display-5 fw-bold">PDF一括処理 & PayPal決済リンク発行
+                    {% if mode == 'sandbox' %}
+                    <span class="mode-badge sandbox">Sandbox</span>
+                    {% else %}
+                    <span class="mode-badge live">本番</span>
+                    {% endif %}
+                </h1>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="row">
+            <div class="col-md-8 mx-auto">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">PDFアップロード</h5>
+                        <p class="card-text">複数のPDFファイルをアップロードして一括処理できます。<br>各PDFから金額と顧客名が自動抽出され、PayPal決済リンクが生成されます。</p>
+                        
+                        <form action="/upload" method="post" enctype="multipart/form-data" id="upload-form">
+                            <div class="drag-area" id="drag-area">
+                                <div class="icon">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                </div>
+                                <span>ここにファイルをドラッグ&ドロップするか</span>
+                                <button type="button" class="btn btn-primary mt-2" id="browse-btn">ファイルを選択</button>
+                                <input type="file" name="files[]" id="file-input" multiple accept=".pdf" hidden>
+                            </div>
+                            
+                            <div class="file-list" id="file-list"></div>
+                            
+                            <div class="mt-3">
+                            <div class="form-group mb-3">
+                                <label for="amount-input">請求金額（自動検出できない場合に指定）</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="amount-input" name="amount" placeholder="例: 10000">
+                                    <span class="input-group-text">円</span>
+                                </div>
+                                <small class="form-text text-muted">PDFからの金額抽出が正確でない場合、ここに正しい金額を入力してください。</small>
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-success position-relative" type="submit" id="submit-btn" disabled>
+                                    <span id="button-text">処理開始</span>
+                                    <span id="loading-spinner" class="spinner-border spinner-border-sm position-absolute top-50 start-50 translate-middle d-none" role="status" aria-hidden="true"></span>
+                                </button>
+                            </div>
+                            <div class="progress mt-3 d-none" id="progress-container">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const dragArea = document.getElementById('drag-area');
+            const fileInput = document.getElementById('file-input');
+            const browseBtn = document.getElementById('browse-btn');
+            const fileList = document.getElementById('file-list');
+            const submitBtn = document.getElementById('submit-btn');
+            const files = new Set();
+            
+            // クリックでファイル選択
+            browseBtn.addEventListener('click', () => {
+                fileInput.click();
+            });
+            
+            // ファイル選択時の処理
+            fileInput.addEventListener('change', () => {
+                handleFiles(fileInput.files);
+                fileInput.value = '';
+            });
+            
+            // ドラッグオーバー
+            dragArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dragArea.classList.add('active');
+            });
+            
+            // ドラッグリーブ
+            dragArea.addEventListener('dragleave', () => {
+                dragArea.classList.remove('active');
+            });
+            
+            // ドロップ
+            dragArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dragArea.classList.remove('active');
+                handleFiles(e.dataTransfer.files);
+            });
+            
+            // ファイル処理
+            function handleFiles(fileList) {
+                for (let i = 0; i < fileList.length; i++) {
+                    const file = fileList[i];
+                    // PDFファイルのみ
+                    if (file.type === 'application/pdf') {
+                        files.add(file);
+                        displayFile(file);
+                    }
+                }
+                updateSubmitButton();
+                // ファイル選択後に必ずDataTransferを更新
+                updateFileInput();
+            }
+            
+            // ファイル表示
+            function displayFile(file) {
+                const fileId = Date.now() + Math.random().toString(36).substring(2, 9);
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                fileItem.innerHTML = `
+                    <div class="file-info">${file.name} (${formatFileSize(file.size)})</div>
+                    <div class="file-delete" data-file-id="${fileId}">✖</div>
+                `;
+                fileList.appendChild(fileItem);
+                
+                // 削除処理
+                fileItem.querySelector('.file-delete').addEventListener('click', function() {
+                    files.delete(file);
+                    fileItem.remove();
+                    updateSubmitButton();
+                    // ファイル削除後もDataTransferを更新
+                    updateFileInput();
+                });
+            }
+            
+            // ファイル入力を更新
+            function updateFileInput() {
+                // ブラウザの互換性の問題を回避するため、DataTransferの使用を避ける
+                // 代わりにグローバルのfilesセットを使用
+                console.log('ファイル更新: ファイル数 =', files.size);
+            }
+            
+            // ファイルサイズのフォーマット
+            function formatFileSize(bytes) {
+                if (bytes < 1024) return bytes + ' bytes';
+                else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+                else return (bytes / 1048576).toFixed(1) + ' MB';
+            }
+            
+            // 送信ボタンの更新
+            function updateSubmitButton() {
+                console.log('送信ボタン更新: ファイル数 =', files.size);
+                
+                // ファイル数が0より大きい場合は有効化
+                if (files.size > 0) {
+                    submitBtn.disabled = false;
+                    console.log('ボタンを有効化しました');
+                } else {
+                    submitBtn.disabled = true;
+                    console.log('ボタンは無効化されています');
+                }
+                
+                // ボタンの状態を直接確認
+                console.log('ボタンの状態 (disabled):', submitBtn.disabled);
+            }
+
+            // アップロードボタンのクリックイベント
+            submitBtn.addEventListener('click', function(e) {
+                // 既定の送信動作を防止
+                e.preventDefault();
+                
+                const buttonText = document.getElementById('button-text');
+                const loadingSpinner = document.getElementById('loading-spinner');
+                const progressContainer = document.getElementById('progress-container');
+                const form = document.getElementById('upload-form');
+                const fileList = document.getElementById('file-list');
+                
+                console.log('処理開始ボタンがクリックされました');
+                console.log('ファイル数 (Set):', files.size);
+                console.log('ファイルリストの子要素数:', fileList.children.length);
+                
+                // ファイルが選択されているか確認 - 表示上のファイルリストで判断
+                if (fileList.children.length > 0) {
+                    try {
+                        // ボタンのテキストを「処理中...」に変更
+                        buttonText.textContent = '処理中...';
+                        // ローディングスピナーを表示
+                        loadingSpinner.classList.remove('d-none');
+                        // 送信ボタンを無効化
+                        submitBtn.disabled = true;
+                        // プログレスバーを表示
+                        progressContainer.classList.remove('d-none');
+                        // ファイル選択とドラッグエリアを無効化
+                        fileInput.disabled = true;
+                        browseBtn.disabled = true;
+                        dragArea.classList.add('disabled');
+                        
+                        console.log('フォーム送信準備完了');
+                        
+                        // フォーム送信の代わりに手動でXHRを使用
+                        const formData = new FormData();
+                        
+                        // グローバルfilesセットからファイルを取得しformDataに追加
+                        console.log('ファイルをFormDataに追加中...');
+                        files.forEach(file => {
+                            console.log(`ファイル追加: ${file.name} (${file.size} bytes)`);
+                            formData.append('files[]', file);
+                        });
+                        
+                        // FormDataの内容をデバッグ出力
+                        console.log('FormData内容:');
+                        for (let pair of formData.entries()) {
+                            console.log(pair[0] + ': ' + (pair[1] instanceof File ? pair[1].name : pair[1]));
+                        }
+                        
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', '/upload', true);
+                        
+                        xhr.onreadystatechange = function() {
+                            if (xhr.readyState === 4) {
+                                console.log('レスポンス受信:', xhr.status);
+                                if (xhr.status === 200) {
+                                    // 成功時にレスポンスを受け取り、ページを置き換え
+                                    document.open();
+                                    document.write(xhr.responseText);
+                                    document.close();
+                                } else {
+                                    // エラー時は再度元のフォームを表示
+                                    alert('エラーが発生しました: ' + xhr.status);
+                                    location.reload();
+                                }
+                            }
+                        };
+                        
+                        console.log('リクエスト送信開始');
+                        xhr.send(formData);
+                    } catch (error) {
+                        console.error('フォーム送信エラー:', error);
+                    }
+                } else {
+                    alert('ファイルを選択してください');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

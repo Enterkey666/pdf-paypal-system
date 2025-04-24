@@ -1,0 +1,5 @@
+pdfplumber
+python-dotenv
+requests
+Flask
+Werkzeug
