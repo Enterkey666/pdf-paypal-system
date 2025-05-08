@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 > nul
 REM PDF処理 & PayPal決済リンク発行システム 自動起動ランチャー
 title PDF処理 & PayPal決済リンク発行システム - 簡単起動ツール
 
@@ -10,14 +11,13 @@ echo このツールはZIPファイルから展開後、簡単にアプリを起
 echo.
 
 REM 現在のディレクトリを取得
-set CURRENT_DIR=%~dp0
-set CURRENT_DIR=%CURRENT_DIR:~0,-1%
+cd /d "%~dp0"
 
 REM アプリケーションのパスを設定
-set APP_PATH=%CURRENT_DIR%\start_app.bat
+set APP_PATH=start_app.bat
 
 REM 初回起動かどうかを確認
-if not exist "%CURRENT_DIR%\.initialized" (
+if not exist ".initialized" (
     echo 初めての起動を検出しました。初期セットアップを行います...
     echo.
     
@@ -51,7 +51,7 @@ if not exist "%CURRENT_DIR%\.initialized" (
     )
     
     REM 初期化済みフラグを作成
-    echo 1 > "%CURRENT_DIR%\.initialized"
+    echo 1 > ".initialized"
 )
 
 echo アプリケーションを起動しています...
@@ -61,7 +61,7 @@ echo ※ アプリケーションが起動したら、このウィンドウは�
 echo.
 
 REM アプリケーションを起動
-start "" "%APP_PATH%"
+start "" %APP_PATH%
 
 REM 3秒待機してから終了
 timeout /t 3 /nobreak >nul

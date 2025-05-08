@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 > nul
 REM PDF処理 & PayPal決済リンク発行システム ショートカット作成スクリプト
 setlocal enabledelayedexpansion
 

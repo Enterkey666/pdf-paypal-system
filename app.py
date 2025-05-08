@@ -226,12 +226,17 @@ def create_paypal_payment_link(amount, currency="JPY", description=""):
                     "amount": {
                         "currency_code": currency,
                         "value": amount_str
-                    }
+                    },
+                    "description": description
                 }
             ],
             "application_context": {
                 "return_url": f"{host_url}/payment-success",
-                "cancel_url": f"{host_url}/payment-cancel"
+                "cancel_url": f"{host_url}/payment-cancel",
+                "brand_name": "PDF処理システム",
+                "landing_page": "BILLING",
+                "shipping_preference": "NO_SHIPPING",
+                "user_action": "PAY_NOW"
             }
         }
         

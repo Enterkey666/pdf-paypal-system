@@ -1,0 +1,4 @@
+[autorun]
+open=setup.bat
+icon=static\favicon.ico
+label=PDF処理 & PayPal決済リンク発行システム

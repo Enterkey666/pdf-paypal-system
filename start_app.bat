@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 > nul
 REM PDF処理 & PayPal決済リンク発行システム自動起動スクリプト
 title PDF処理 & PayPal決済リンク発行システム
 

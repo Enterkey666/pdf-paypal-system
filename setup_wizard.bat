@@ -1,0 +1,118 @@
+@echo off
+title PDF Processing System - Setup Wizard
+
+echo ===================================================
+echo  PDF Processing System - Setup Wizard
+echo ===================================================
+echo.
+
+REM Check for admin rights
+net session >nul 2>&1
+set ADMIN_RIGHTS=%ERRORLEVEL%
+
+REM Get current directory
+set CURRENT_DIR=%~dp0
+set CURRENT_DIR=%CURRENT_DIR:~0,-1%
+
+REM Create a graphical interface using VBScript
+echo Set objShell = CreateObject("WScript.Shell") > "%TEMP%\setup.vbs"
+echo Set objFSO = CreateObject("Scripting.FileSystemObject") >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo ' Check for Docker >> "%TEMP%\setup.vbs"
+echo dockerInstalled = False >> "%TEMP%\setup.vbs"
+echo On Error Resume Next >> "%TEMP%\setup.vbs"
+echo objShell.Run "docker --version", 0, True >> "%TEMP%\setup.vbs"
+echo If Err.Number = 0 Then >> "%TEMP%\setup.vbs"
+echo     dockerInstalled = True >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo On Error GoTo 0 >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo ' Check for Python >> "%TEMP%\setup.vbs"
+echo pythonInstalled = False >> "%TEMP%\setup.vbs"
+echo On Error Resume Next >> "%TEMP%\setup.vbs"
+echo objShell.Run "python --version", 0, True >> "%TEMP%\setup.vbs"
+echo If Err.Number = 0 Then >> "%TEMP%\setup.vbs"
+echo     pythonInstalled = True >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo On Error GoTo 0 >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo ' Create setup dialog >> "%TEMP%\setup.vbs"
+echo strMessage = "PDF Processing System Setup" & vbCrLf & vbCrLf >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo If dockerInstalled Then >> "%TEMP%\setup.vbs"
+echo     strMessage = strMessage & "Docker is installed. You can run the application with Docker." & vbCrLf >> "%TEMP%\setup.vbs"
+echo     dockerOption = "Run with Docker (recommended)" >> "%TEMP%\setup.vbs"
+echo Else >> "%TEMP%\setup.vbs"
+echo     strMessage = strMessage & "Docker is not installed. Would you like to install it?" & vbCrLf >> "%TEMP%\setup.vbs"
+echo     dockerOption = "Install Docker (recommended)" >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo If pythonInstalled Then >> "%TEMP%\setup.vbs"
+echo     strMessage = strMessage & "Python is installed. You can run the application directly." & vbCrLf >> "%TEMP%\setup.vbs"
+echo     pythonOption = "Run with Python" >> "%TEMP%\setup.vbs"
+echo Else >> "%TEMP%\setup.vbs"
+echo     strMessage = strMessage & "Python is not installed. Would you like to install it?" & vbCrLf >> "%TEMP%\setup.vbs"
+echo     pythonOption = "Install Python" >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo strMessage = strMessage & vbCrLf & "Please select an option:" >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo ' Create buttons based on available options >> "%TEMP%\setup.vbs"
+echo Set objDialog = CreateObject("HtmlDlg.HtmlDlg") >> "%TEMP%\setup.vbs"
+echo htmlContent = "<html><head><title>PDF Processing System Setup</title>" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "<style>" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "body { font-family: Arial; padding: 20px; }" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "h2 { color: #0066cc; }" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "button { padding: 10px; margin: 10px; min-width: 200px; cursor: pointer; }" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & ".primary { background-color: #0066cc; color: white; border: none; }" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & ".secondary { background-color: #f0f0f0; color: black; border: 1px solid #ccc; }" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "</style></head><body>" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "<h2>PDF Processing System Setup</h2>" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "<p>Please select how you would like to run the application:</p>" >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo If dockerInstalled Then >> "%TEMP%\setup.vbs"
+echo     htmlContent = htmlContent & "<button class='primary' onclick='window.returnValue=1; window.close();'>Run with Docker (recommended)</button><br>" >> "%TEMP%\setup.vbs"
+echo Else >> "%TEMP%\setup.vbs"
+echo     htmlContent = htmlContent & "<button class='primary' onclick='window.returnValue=2; window.close();'>Install Docker (recommended)</button><br>" >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo If pythonInstalled Then >> "%TEMP%\setup.vbs"
+echo     htmlContent = htmlContent & "<button class='secondary' onclick='window.returnValue=3; window.close();'>Run with Python</button><br>" >> "%TEMP%\setup.vbs"
+echo Else >> "%TEMP%\setup.vbs"
+echo     htmlContent = htmlContent & "<button class='secondary' onclick='window.returnValue=4; window.close();'>Install Python</button><br>" >> "%TEMP%\setup.vbs"
+echo End If >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "<button class='secondary' onclick='window.returnValue=0; window.close();'>Cancel</button>" >> "%TEMP%\setup.vbs"
+echo htmlContent = htmlContent & "</body></html>" >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo objDialog.sText = htmlContent >> "%TEMP%\setup.vbs"
+echo objDialog.vBannerIcon = "C:\Windows\System32\shell32.dll,13" >> "%TEMP%\setup.vbs"
+echo result = objDialog.Object.showModal >> "%TEMP%\setup.vbs"
+echo. >> "%TEMP%\setup.vbs"
+echo ' Process the result >> "%TEMP%\setup.vbs"
+echo Select Case result >> "%TEMP%\setup.vbs"
+echo     Case 1 ' Run with Docker >> "%TEMP%\setup.vbs"
+echo         objShell.Run "cmd /c cd /d ""%CURRENT_DIR%"" && docker-compose up -d && start http://localhost:5000", 1, False >> "%TEMP%\setup.vbs"
+echo         MsgBox "Application started with Docker. Opening browser...", vbInformation, "PDF Processing System" >> "%TEMP%\setup.vbs"
+echo     Case 2 ' Install Docker >> "%TEMP%\setup.vbs"
+echo         If MsgBox("Docker will be downloaded and installed. Continue?", vbYesNo + vbQuestion, "Install Docker") = vbYes Then >> "%TEMP%\setup.vbs"
+echo             objShell.Run "start https://www.docker.com/products/docker-desktop", 1, False >> "%TEMP%\setup.vbs"
+echo             MsgBox "After installing Docker, please run this setup again.", vbInformation, "PDF Processing System" >> "%TEMP%\setup.vbs"
+echo         End If >> "%TEMP%\setup.vbs"
+echo     Case 3 ' Run with Python >> "%TEMP%\setup.vbs"
+echo         objShell.Run "cmd /c cd /d ""%CURRENT_DIR%"" && pip install -r requirements.txt && start http://localhost:5000 && python app.py", 1, False >> "%TEMP%\setup.vbs"
+echo         MsgBox "Application started with Python. Opening browser...", vbInformation, "PDF Processing System" >> "%TEMP%\setup.vbs"
+echo     Case 4 ' Install Python >> "%TEMP%\setup.vbs"
+echo         If MsgBox("Python will be downloaded and installed. Continue?", vbYesNo + vbQuestion, "Install Python") = vbYes Then >> "%TEMP%\setup.vbs"
+echo             objShell.Run "start https://www.python.org/downloads/", 1, False >> "%TEMP%\setup.vbs"
+echo             MsgBox "After installing Python, please run this setup again.", vbInformation, "PDF Processing System" >> "%TEMP%\setup.vbs"
+echo         End If >> "%TEMP%\setup.vbs"
+echo     Case Else ' Cancel or close >> "%TEMP%\setup.vbs"
+echo         ' Do nothing >> "%TEMP%\setup.vbs"
+echo End Select >> "%TEMP%\setup.vbs"
+
+REM Run the setup script
+start /wait "" "%TEMP%\setup.vbs"
+del "%TEMP%\setup.vbs" >nul 2>&1
+
+exit /b 0
