@@ -12,6 +12,7 @@ echo.
 
 REM 現在のディレクトリを取得
 cd /d "%~dp0"
+set CURRENT_DIR=%~dp0
 
 REM アプリケーションのパスを設定
 set APP_PATH=start_app.bat
