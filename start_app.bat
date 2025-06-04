@@ -83,7 +83,7 @@ echo ブラウザが自動的に開きます。
 echo.
 echo ※ アプリケーションを終了するには、このウィンドウを閉じるか、Ctrl+Cを押してください。
 echo.
-start "" http://localhost:5000
+start "" http://localhost:8080
 python app.py
 
 exit /b 0

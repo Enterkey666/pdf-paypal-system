@@ -8,55 +8,425 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
     <!-- Bootstrap JavaScriptを先読みで読み込み -->
     <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap">
     <style>
+        :root {
+            --primary-color: #4361ee;
+            --secondary-color: #3f37c9;
+            --accent-color: #4cc9f0;
+            --success-color: #4ade80;
+            --warning-color: #fbbf24;
+            --danger-color: #f87171;
+            --light-color: #f8fafc;
+            --dark-color: #1e293b;
+            --border-radius: 12px;
+            --box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #f0f5ff;
+            color: var(--dark-color);
+            transition: all 0.3s ease;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            box-shadow: var(--box-shadow);
+        }
+        
+        .navbar-brand {
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        
+        .card {
+            border: none;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            font-weight: 500;
+            border-bottom: none;
+            padding: 1rem 1.5rem;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border: none;
+            box-shadow: 0 4px 6px rgba(67, 97, 238, 0.3);
+            border-radius: 50px;
+            padding: 0.6rem 1.5rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 7px 14px rgba(67, 97, 238, 0.4);
+            background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
+        }
+        
+        .btn-secondary {
+            background: white;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+            box-shadow: 0 4px 6px rgba(67, 97, 238, 0.1);
+            border-radius: 50px;
+            padding: 0.6rem 1.5rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(67, 97, 238, 0.1);
+            transform: translateY(-2px);
+            box-shadow: 0 7px 14px rgba(67, 97, 238, 0.2);
+        }
+        
         .drag-area {
-            border: 2px dashed #ccc;
-            border-radius: 5px;
-            padding: 25px;
+            border: 2px dashed var(--primary-color);
+            border-radius: var(--border-radius);
+            padding: 40px 30px;
             text-align: center;
             margin: 20px 0;
             cursor: pointer;
+            transition: all 0.4s ease;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 15px rgba(67, 97, 238, 0.1);
         }
+        
+        .drag-area::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            right: -10px;
+            bottom: -10px;
+            border: 3px dashed rgba(67, 97, 238, 0.2);
+            border-radius: calc(var(--border-radius) + 5px);
+            animation: rotate 60s linear infinite;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+        
+        .drag-area:hover::before {
+            opacity: 1;
+        }
+        
+        @keyframes rotate {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        
+        .drag-area:hover {
+            border-color: var(--accent-color);
+            background-color: rgba(76, 201, 240, 0.05);
+            transform: translateY(-5px);
+            box-shadow: 0 15px 25px -10px rgba(67, 97, 238, 0.25), inset 0 0 15px rgba(67, 97, 238, 0.2);
+        }
+        
         .drag-area.active {
-            border-color: #007bff;
-            background-color: rgba(0, 123, 255, 0.05);
+            border-color: var(--accent-color);
+            background-color: rgba(76, 201, 240, 0.1);
+            animation: pulse 1.5s infinite;
         }
+        
+        .drag-area.disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(76, 201, 240, 0.4);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(76, 201, 240, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(76, 201, 240, 0);
+            }
+        }
+        
         .file-list {
-            margin-top: 15px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 10px;
+            border-radius: var(--border-radius);
         }
+        
+        .file-list.empty::after {
+            content: 'ファイルがありません';
+            display: block;
+            text-align: center;
+            padding: 30px;
+            color: #a0aec0;
+            font-style: italic;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: var(--border-radius);
+            border: 1px dashed #cbd5e0;
+        }
+        
+        .file-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .file-list::-webkit-scrollbar-track {
+            background: rgba(241, 241, 241, 0.5);
+            border-radius: 10px;
+        }
+        
+        .file-list::-webkit-scrollbar-thumb {
+            background: linear-gradient(to bottom, var(--primary-color), var(--accent-color));
+            border-radius: 10px;
+        }
+        
         .file-item {
             display: flex;
             align-items: center;
-            padding: 5px 0;
+            padding: 15px;
+            background: white;
+            border-radius: var(--border-radius);
+            margin-bottom: 12px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            border-left: 4px solid var(--primary-color);
         }
+        
+        .file-item:hover {
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+            border-left: 4px solid var(--accent-color);
+        }
+        
+        .file-icon {
+            margin-right: 15px;
+            font-size: 1.5rem;
+        }
+        
+        .file-info {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .file-name {
+            font-weight: 500;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .file-size {
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+        
         .file-delete {
-            margin-left: 10px;
-            color: #dc3545;
+            margin-left: 15px;
+            color: var(--danger-color);
             cursor: pointer;
+            transition: all 0.3s ease;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background-color: rgba(248, 113, 113, 0.1);
         }
+        
+        .file-delete:hover {
+            transform: scale(1.1) rotate(90deg);
+            background-color: rgba(248, 113, 113, 0.2);
+        }
+        
         .mode-badge {
-            font-size: 0.8em;
-            padding: 3px 8px;
-            border-radius: 10px;
-            margin-left: 10px;
+            font-size: 0.75rem;
+            padding: 0.35rem 1rem;
+            border-radius: 50px;
+            margin-left: 15px;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: inline-flex;
+            align-items: center;
+            letter-spacing: 0.5px;
+            position: relative;
+            overflow: hidden;
         }
+        
+        .mode-badge::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0));
+            z-index: 1;
+        }
+        
+        .mode-badge::after {
+            content: '';
+            position: absolute;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
         .sandbox {
-            background-color: #ffc107;
-            color: #000;
-        }
-        .live {
-            background-color: #dc3545;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
             color: #fff;
+        }
+        
+        .live {
+            background: linear-gradient(135deg, #34d399, #10b981);
+            color: #fff;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            transform: translateX(calc(100% + 40px));
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 1000;
+            max-width: 400px;
+            border-left: 4px solid var(--primary-color);
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification-icon {
+            margin-right: 15px;
+            font-size: 1.5rem;
+            color: var(--primary-color);
+        }
+        
+        .notification-content {
+            flex: 1;
+            font-size: 0.9rem;
+        }
+        
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+        
+        .progress {
+            height: 10px;
+            border-radius: 50px;
+            background-color: #e2e8f0;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+            border-radius: 50px;
+            transition: width 0.5s ease;
+        }
+        
+        .result-card {
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+        
+        .result-card.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: white;
+            border-left: 4px solid var(--success-color);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            z-index: 1000;
+            transform: translateX(120%);
+            transition: transform 0.3s ease;
+            display: flex;
+            align-items: center;
+        }
+        
+        .notification.show {
+            transform: translateX(0);
+        }
+        
+        .notification-icon {
+            margin-right: 15px;
+            font-size: 1.5em;
+            color: var(--success-color);
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+        
+        .animate__animated {
+            animation-duration: 0.8s;
         }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark sticky-top animate__animated animate__fadeIn">
         <div class="container">
-            <a class="navbar-brand" href="/">
-                <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク発行システム
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <div class="me-2 d-flex align-items-center justify-content-center rounded-circle bg-white" style="width: 40px; height: 40px;">
+                    <i class="bi bi-file-earmark-pdf text-primary fs-4"></i>
+                </div>
+                <span>PDF処理 & PayPal決済リンク</span>
                 {% if paypal_mode == 'live' %}
-                <span class="mode-badge live">本番</span>
+                <span class="mode-badge live ms-2">本番</span>
                 {% endif %}
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -64,81 +434,119 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link active" href="/"><i class="bi bi-house"></i> ホーム</a>
+                    <li class="nav-item mx-1">
+                        <a class="nav-link active rounded-pill px-3 py-2" href="/"><i class="bi bi-house-fill me-1"></i> ホーム</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2" href="/history"><i class="bi bi-clock-history me-1"></i> 履歴</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2" href="/settings"><i class="bi bi-gear-fill me-1"></i> 設定</a>
                     </li>
                 </ul>
             </div>
         </div>
     </nav>
 
-    <div class="container py-4">
-        <header class="pb-3 mb-4 border-bottom">
-            <div class="d-flex align-items-center">
-                <h1 class="display-5 fw-bold">PDF一括処理 & PayPal決済リンク発行
-                    {% if mode == 'sandbox' %}
-                    <span class="mode-badge sandbox">Sandbox</span>
-                    {% else %}
-                    <span class="mode-badge live">本番</span>
-                    {% endif %}
-                </h1>
+    <div class="container py-5">
+        <header class="text-center mb-5 animate__animated animate__fadeInDown">
+            <div class="position-relative d-inline-block">
+                <h1 class="display-4 fw-bold mb-0">PDF一括処理 & PayPal決済リンク発行</h1>
+                <div class="position-absolute" style="bottom: -10px; left: 50%; transform: translateX(-50%); width: 150px; height: 4px; background: linear-gradient(90deg, var(--primary-color), var(--accent-color)); border-radius: 2px;"></div>
             </div>
+            <p class="lead text-muted mt-4 mb-0">請求書からの情報抽出と決済リンク生成を自動化</p>
+            {% if mode == 'sandbox' %}
+            <span class="mode-badge sandbox mt-3 animate__animated animate__fadeIn animate__delay-1s">Sandbox モード</span>
+            {% else %}
+            <span class="mode-badge live mt-3 animate__animated animate__fadeIn animate__delay-1s">本番モード</span>
+            {% endif %}
         </header>
 
-        {% with messages = get_flashed_messages() %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                {% for message in messages %}
-                <div class="alert alert-warning alert-dismissible fade show" role="alert">
-                    {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                {% for category, message in messages %}
+                <div class="notification animate__animated animate__fadeInRight" id="flash-notification">
+                    <div class="notification-icon">
+                        <i class="bi bi-info-circle-fill"></i>
+                    </div>
+                    <div class="notification-content">
+                        {{ message }}
+                    </div>
+                    <button type="button" class="btn-close ms-3" onclick="document.getElementById('flash-notification').classList.remove('show')"></button>
                 </div>
                 {% endfor %}
             {% endif %}
         {% endwith %}
 
         <div class="row">
-            <div class="col-md-8 mx-auto">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">PDFアップロード</h5>
-                        <p class="card-text">複数のPDFファイルをアップロードして一括処理できます。<br>各PDFから金額と顧客名が自動抽出され、PayPal決済リンクが生成されます。</p>
+            <div class="col-lg-8 col-md-10 mx-auto">
+                <div class="card animate__animated animate__fadeInUp shadow-lg">
+                    <div class="card-header d-flex align-items-center">
+                        <i class="bi bi-file-earmark-pdf fs-4 me-2"></i>
+                        <h5 class="card-title mb-0">PDFアップロード</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="card-text mb-4">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="feature-icon bg-primary bg-gradient text-white p-2 rounded-circle me-3">
+                                    <i class="bi bi-files"></i>
+                                </div>
+                                <p class="mb-0">複数のPDFファイルをアップロードして一括処理</p>
+                            </div>
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="feature-icon bg-success bg-gradient text-white p-2 rounded-circle me-3">
+                                    <i class="bi bi-cash-coin"></i>
+                                </div>
+                                <p class="mb-0">金額と顧客名をAIが自動抽出</p>
+                            </div>
+                            <div class="d-flex align-items-center">
+                                <div class="feature-icon bg-info bg-gradient text-white p-2 rounded-circle me-3">
+                                    <i class="bi bi-link-45deg"></i>
+                                </div>
+                                <p class="mb-0">PayPal決済リンクを自動生成</p>
+                            </div>
+                        </div>
                         
                         <form action="/upload" method="post" enctype="multipart/form-data" id="upload-form">
-                            <div class="drag-area" id="drag-area">
-                                <div class="icon">
-                                    <i class="fas fa-cloud-upload-alt"></i>
+                            <div class="drag-area animate__animated animate__pulse animate__infinite animate__slower" id="drag-area">
+                                <div class="icon mb-3">
+                                    <i class="bi bi-cloud-arrow-up-fill fs-1 text-primary"></i>
                                 </div>
-                                <span>ここにファイルをドラッグ&ドロップするか</span>
-                                <button type="button" class="btn btn-primary mt-2" id="browse-btn">ファイルを選択</button>
+                                <h4 class="mb-3">ファイルをドラッグ&ドロップ</h4>
+                                <p class="text-muted mb-3">または下のボタンをクリックしてファイルを選択</p>
+                                <button type="button" class="btn btn-primary btn-lg px-4 py-2" id="browse-btn">
+                                    <i class="bi bi-folder2-open me-2"></i>ファイルを選択
+                                </button>
                                 <input type="file" name="files[]" id="file-input" multiple accept=".pdf" hidden>
                             </div>
                             
-                            <div class="file-list" id="file-list"></div>
+                            <div class="file-list mt-4" id="file-list"></div>
                             
-                            <div class="mt-3">
-                            <div class="form-group mb-3">
-                                <label for="amount-input">請求金額（自動検出できない場合に指定）</label>
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="amount-input" name="amount" placeholder="例: 10000">
-                                    <span class="input-group-text">円</span>
+                            <div class="mt-4">
+                                <div class="form-group mb-4">
+                                    <label for="amount-input" class="form-label fw-bold d-flex align-items-center">
+                                        <i class="bi bi-currency-yen me-2"></i>請求金額（オプション）
+                                    </label>
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text bg-light">¥</span>
+                                        <input type="number" class="form-control form-control-lg" id="amount-input" name="amount" placeholder="例: 10000">
+                                        <span class="input-group-text bg-light">円</span>
+                                    </div>
+                                    <small class="form-text text-muted mt-2">
+                                        <i class="bi bi-info-circle me-1"></i>PDFからの金額抽出が正確でない場合にのみ入力してください。
+                                    </small>
                                 </div>
-                                <small class="form-text text-muted">PDFからの金額抽出が正確でない場合、ここに正しい金額を入力してください。</small>
-                            </div>
                             
-                            <div class="d-grid gap-2">
-                                <button class="btn btn-success position-relative" type="submit" id="submit-btn" disabled>
-                                    <span id="button-text">処理開始</span>
-                                    <span id="loading-spinner" class="spinner-border spinner-border-sm position-absolute top-50 start-50 translate-middle d-none" role="status" aria-hidden="true"></span>
-                                </button>
-                            </div>
-                            <div class="progress mt-3 d-none" id="progress-container">
-                                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                                <div class="d-grid gap-2 mt-4">
+                                    <button class="btn btn-success btn-lg position-relative" type="submit" id="submit-btn" disabled>
+                                        <i class="bi bi-play-fill me-2"></i>
+                                        <span id="button-text">処理開始</span>
+                                        <span id="loading-spinner" class="spinner-border spinner-border-sm position-absolute top-50 start-50 translate-middle d-none" role="status" aria-hidden="true"></span>
+                                    </button>
+                                </div>
+                                <div class="progress mt-3 d-none" id="progress-container">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                                </div>
                             </div>
                         </form>
                     </div>
@@ -147,6 +555,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const dragArea = document.getElementById('drag-area');
@@ -154,10 +563,21 @@
             const browseBtn = document.getElementById('browse-btn');
             const fileList = document.getElementById('file-list');
             const submitBtn = document.getElementById('submit-btn');
+            const progressBar = document.querySelector('.progress-bar');
+            const progressContainer = document.getElementById('progress-container');
             const files = new Set();
+            
+            // 初期アニメーション
+            setTimeout(() => {
+                dragArea.classList.remove('animate__infinite');
+            }, 3000);
             
             // クリックでファイル選択
             browseBtn.addEventListener('click', () => {
+                browseBtn.classList.add('animate__animated', 'animate__pulse');
+                setTimeout(() => {
+                    browseBtn.classList.remove('animate__animated', 'animate__pulse');
+                }, 500);
                 fileInput.click();
             });
             
@@ -165,38 +585,74 @@
             fileInput.addEventListener('change', () => {
                 handleFiles(fileInput.files);
                 fileInput.value = '';
+                showSuccessToast('ファイルが選択されました');
             });
             
             // ドラッグオーバー
             dragArea.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 dragArea.classList.add('active');
+                dragArea.classList.add('animate__pulse');
             });
             
             // ドラッグリーブ
             dragArea.addEventListener('dragleave', () => {
                 dragArea.classList.remove('active');
+                dragArea.classList.remove('animate__pulse');
             });
             
             // ドロップ
             dragArea.addEventListener('drop', (e) => {
                 e.preventDefault();
                 dragArea.classList.remove('active');
+                dragArea.classList.remove('animate__pulse');
+                
+                // ドロップエフェクト
+                dragArea.classList.add('animate__animated', 'animate__bounceIn');
+                setTimeout(() => {
+                    dragArea.classList.remove('animate__animated', 'animate__bounceIn');
+                }, 750);
+                
                 handleFiles(e.dataTransfer.files);
+                showSuccessToast('ファイルがドロップされました');
             });
             
             // ファイル処理
             function handleFiles(fileList) {
+                let addedCount = 0;
+                let invalidCount = 0;
+                
                 for (let i = 0; i < fileList.length; i++) {
                     const file = fileList[i];
                     // PDFファイルのみ
                     if (file.type === 'application/pdf') {
-                        files.add(file);
-                        displayFile(file);
+                        // 既に追加済みのファイルをチェック
+                        let isDuplicate = false;
+                        files.forEach(existingFile => {
+                            if (existingFile.name === file.name && existingFile.size === file.size) {
+                                isDuplicate = true;
+                            }
+                        });
+                        
+                        if (!isDuplicate) {
+                            files.add(file);
+                            displayFile(file);
+                            addedCount++;
+                        }
+                    } else {
+                        invalidCount++;
                     }
                 }
+                
+                // 結果通知
+                if (addedCount > 0) {
+                    showSuccessToast(`${addedCount}個のPDFファイルを追加しました`);
+                }
+                if (invalidCount > 0) {
+                    showWarningToast(`${invalidCount}個のファイルはPDF形式ではないため無視されました`);
+                }
+                
                 updateSubmitButton();
-                // ファイル選択後に必ずDataTransferを更新
                 updateFileInput();
             }
             
@@ -204,28 +660,52 @@
             function displayFile(file) {
                 const fileId = Date.now() + Math.random().toString(36).substring(2, 9);
                 const fileItem = document.createElement('div');
-                fileItem.className = 'file-item';
+                fileItem.className = 'file-item animate__animated animate__fadeInDown';
+                
+                // ファイルアイコンとタイプに基づいた色を設定
+                const fileExtension = file.name.split('.').pop().toLowerCase();
+                
                 fileItem.innerHTML = `
-                    <div class="file-info">${file.name} (${formatFileSize(file.size)})</div>
-                    <div class="file-delete" data-file-id="${fileId}">✖</div>
+                    <div class="file-icon">
+                        <i class="bi bi-file-earmark-pdf-fill text-danger"></i>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${formatFileSize(file.size)}</div>
+                    </div>
+                    <div class="file-delete" data-file-id="${fileId}">
+                        <i class="bi bi-x-circle-fill"></i>
+                    </div>
                 `;
+                
                 fileList.appendChild(fileItem);
                 
                 // 削除処理
                 fileItem.querySelector('.file-delete').addEventListener('click', function() {
-                    files.delete(file);
-                    fileItem.remove();
-                    updateSubmitButton();
-                    // ファイル削除後もDataTransferを更新
-                    updateFileInput();
+                    // 削除アニメーション
+                    fileItem.classList.remove('animate__fadeInDown');
+                    fileItem.classList.add('animate__fadeOutRight');
+                    
+                    setTimeout(() => {
+                        files.delete(file);
+                        fileItem.remove();
+                        updateSubmitButton();
+                        updateFileInput();
+                        showInfoToast(`${file.name} を削除しました`);
+                    }, 500);
                 });
             }
             
             // ファイル入力を更新
             function updateFileInput() {
-                // ブラウザの互換性の問題を回避するため、DataTransferの使用を避ける
-                // 代わりにグローバルのfilesセットを使用
                 console.log('ファイル更新: ファイル数 =', files.size);
+                
+                // ファイルリストが空の場合は非表示
+                if (files.size === 0) {
+                    fileList.classList.add('empty');
+                } else {
+                    fileList.classList.remove('empty');
+                }
             }
             
             // ファイルサイズのフォーマット
@@ -237,98 +717,94 @@
             
             // 送信ボタンの更新
             function updateSubmitButton() {
-                console.log('送信ボタン更新: ファイル数 =', files.size);
-                
-                // ファイル数が0より大きい場合は有効化
                 if (files.size > 0) {
                     submitBtn.disabled = false;
-                    console.log('ボタンを有効化しました');
+                    submitBtn.classList.add('animate__animated', 'animate__pulse');
+                    setTimeout(() => {
+                        submitBtn.classList.remove('animate__animated', 'animate__pulse');
+                    }, 1000);
                 } else {
                     submitBtn.disabled = true;
-                    console.log('ボタンは無効化されています');
                 }
-                
-                // ボタンの状態を直接確認
-                console.log('ボタンの状態 (disabled):', submitBtn.disabled);
             }
-
-            // アップロードボタンのクリックイベント
-            submitBtn.addEventListener('click', function(e) {
-                // 既定の送信動作を防止
-                e.preventDefault();
-                
+            
+            // フォーム送信処理
+            document.getElementById('upload-form').addEventListener('submit', function(e) {
                 const buttonText = document.getElementById('button-text');
                 const loadingSpinner = document.getElementById('loading-spinner');
-                const progressContainer = document.getElementById('progress-container');
-                const form = document.getElementById('upload-form');
-                const fileList = document.getElementById('file-list');
                 
-                console.log('処理開始ボタンがクリックされました');
-                console.log('ファイル数 (Set):', files.size);
-                console.log('ファイルリストの子要素数:', fileList.children.length);
+                // 送信ボタンをロード状態に
+                buttonText.textContent = '処理中...';
+                loadingSpinner.classList.remove('d-none');
+                submitBtn.disabled = true;
                 
-                // ファイルが選択されているか確認 - 表示上のファイルリストで判断
-                if (fileList.children.length > 0) {
-                    try {
-                        // ボタンのテキストを「処理中...」に変更
-                        buttonText.textContent = '処理中...';
-                        // ローディングスピナーを表示
-                        loadingSpinner.classList.remove('d-none');
-                        // 送信ボタンを無効化
-                        submitBtn.disabled = true;
-                        // プログレスバーを表示
-                        progressContainer.classList.remove('d-none');
-                        // ファイル選択とドラッグエリアを無効化
-                        fileInput.disabled = true;
-                        browseBtn.disabled = true;
-                        dragArea.classList.add('disabled');
-                        
-                        console.log('フォーム送信準備完了');
-                        
-                        // フォーム送信の代わりに手動でXHRを使用
-                        const formData = new FormData();
-                        
-                        // グローバルfilesセットからファイルを取得しformDataに追加
-                        console.log('ファイルをFormDataに追加中...');
-                        files.forEach(file => {
-                            console.log(`ファイル追加: ${file.name} (${file.size} bytes)`);
-                            formData.append('files[]', file);
-                        });
-                        
-                        // FormDataの内容をデバッグ出力
-                        console.log('FormData内容:');
-                        for (let pair of formData.entries()) {
-                            console.log(pair[0] + ': ' + (pair[1] instanceof File ? pair[1].name : pair[1]));
-                        }
-                        
-                        const xhr = new XMLHttpRequest();
-                        xhr.open('POST', '/upload', true);
-                        
-                        xhr.onreadystatechange = function() {
-                            if (xhr.readyState === 4) {
-                                console.log('レスポンス受信:', xhr.status);
-                                if (xhr.status === 200) {
-                                    // 成功時にレスポンスを受け取り、ページを置き換え
-                                    document.open();
-                                    document.write(xhr.responseText);
-                                    document.close();
-                                } else {
-                                    // エラー時は再度元のフォームを表示
-                                    alert('エラーが発生しました: ' + xhr.status);
-                                    location.reload();
-                                }
-                            }
-                        };
-                        
-                        console.log('リクエスト送信開始');
-                        xhr.send(formData);
-                    } catch (error) {
-                        console.error('フォーム送信エラー:', error);
+                // プログレスバーの表示
+                progressContainer.classList.remove('d-none');
+                
+                // プログレスバーのアニメーション
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += Math.random() * 15;
+                    if (progress > 90) {
+                        progress = 90 + Math.random() * 5;
+                        clearInterval(interval);
                     }
-                } else {
-                    alert('ファイルを選択してください');
-                }
+                    progressBar.style.width = `${Math.min(progress, 95)}%`;
+                }, 500);
             });
+            
+            // トースト通知
+            function showSuccessToast(message) {
+                Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 3000,
+                    timerProgressBar: true,
+                    didOpen: (toast) => {
+                        toast.addEventListener('mouseenter', Swal.stopTimer)
+                        toast.addEventListener('mouseleave', Swal.resumeTimer)
+                    }
+                }).fire({
+                    icon: 'success',
+                    title: message
+                });
+            }
+            
+            function showWarningToast(message) {
+                Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 4000,
+                    timerProgressBar: true
+                }).fire({
+                    icon: 'warning',
+                    title: message
+                });
+            }
+            
+            function showInfoToast(message) {
+                Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2000,
+                    timerProgressBar: true
+                }).fire({
+                    icon: 'info',
+                    title: message
+                });
+            }
+            
+            // フラッシュメッセージがあれば表示
+            const flashNotification = document.getElementById('flash-notification');
+            if (flashNotification) {
+                flashNotification.classList.add('show');
+                setTimeout(() => {
+                    flashNotification.classList.remove('show');
+                }, 5000);
+            }
         });
     </script>
 </body>
