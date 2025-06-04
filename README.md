@@ -40,26 +40,96 @@ AI OCR: Google Cloud Vision API、Microsoft Azure Form Recognizer、Tesseract OC
 
 使い方
 
-Windowsの場合
+## ローカル環境での利用
 
-ZIPファイルを展開後、run_app.batをダブルクリックします。
-初回起動時は自動セットアップが行われます。Pythonがインストールされていない場合は自動インストーラーが起動します。必要なライブラリの自動インストールも行われます。デスクトップにショートカットを作成するか選択できます。
-ブラウザが自動的に開き、アプリケーションにアクセスできます。
+### Windowsの場合
 
-macOSの場合
+1. ZIPファイルを展開後、`run_app.bat`をダブルクリックします。
+2. 初回起動時は自動セットアップが行われます。Pythonがインストールされていない場合は自動インストーラーが起動します。必要なライブラリの自動インストールも行われます。デスクトップにショートカットを作成するか選択できます。
+3. ブラウザが自動的に開き、アプリケーションにアクセスできます。
 
-ターミナルを開きます。
-アプリケーションのディレクトリに移動します：cd /path/to/pdf-paypal-system
-./run_app.shを実行してアプリケーションを起動します。
-ブラウザが自動的に開き、アプリケーションのインターフェースが表示されます。
-PDFファイルをアップロードし、処理を開始します。
+### macOSの場合
 
-手動起動方法
+1. ターミナルを開きます。
+2. アプリケーションのディレクトリに移動します：`cd /path/to/pdf-paypal-system`
+3. `./run_app.sh`を実行してアプリケーションを起動します。
+4. または、`Start_PDF_PayPal_System.command`をFinderからダブルクリックして起動することもできます。
+5. ブラウザが自動的に開き、アプリケーションのインターフェースが表示されます。
 
-ローカルサーバーを起動: python app.py
-ブラウザでアクセス: http://localhost:8080
-設定ページでPayPal API情報とOCR設定を行います。
-ホームページでPDFファイルをアップロードして処理します。
-生成された決済リンクを利用して支払いを受け付けます。
+### 手動起動方法
+
+1. ローカルサーバーを起動: `python app.py`
+2. ブラウザでアクセス: `http://localhost:8080`
+3. 設定ページでPayPal API情報とOCR設定を行います。
+4. ホームページでPDFファイルをアップロードして処理します。
+5. 生成された決済リンクを利用して支払いを受け付けます。
+
+## ウェブアプリケーションとしての利用
+
+### Render.comでのデプロイ
+
+1. GitHubアカウントにこのリポジトリをフォークまたはクローンします。
+2. [Render.com](https://render.com/)にアクセスし、アカウントを作成またはログインします。
+3. ダッシュボードから「New +」→「Web Service」を選択します。
+4. GitHubリポジトリを接続し、このプロジェクトを選択します。
+5. 以下の設定を行います：
+   - **Name**: 任意のアプリ名
+   - **Region**: お好みの地域（アジア圏ならSingaporeがおすすめ）
+   - **Branch**: `main`
+   - **Runtime**: `Docker`
+   - **Instance Type**: 無料枠で良い場合は「Free」
+6. 環境変数を設定します（`.env.example`を参考）：
+   - `PAYPAL_CLIENT_ID`: PayPalのクライアントID
+   - `PAYPAL_CLIENT_SECRET`: PayPalのクライアントシークレット
+   - `PAYPAL_MODE`: `sandbox`または`live`
+   - `SECRET_KEY`: セッション用のランダムな文字列
+   - `ENABLE_CSRF_PROTECTION`（任意）: true/false
+   - `SESSION_LIFETIME`（任意）: セッション有効期間（分）
+   - OCRやAI連携用のAPIキーも必要に応じて設定
+7. 「Create Web Service」をクリックしてデプロイを開始します。
+
+---
+
+## セキュリティ・カスタマイズ
+- `.env.example`や`config.example.json`を参考に、必要な環境変数を設定してください。
+- `SECRET_KEY`は必ずランダムな値に変更してください。
+- CSRF対策やセッション有効期間なども環境変数で柔軟に制御できます。
+
+---
+
+## docker-compose拡張例（DBや外部サービス追加時）
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./results:/app/results
+      - ./uploads:/app/uploads
+    # dbやredis等のサービスを追加可能
+  # db:
+  #   image: postgres:15
+  #   ...
+```
+
+### Dockerを使った自己ホスティング
+
+1. リポジトリをクローンします：`git clone https://github.com/yourusername/pdf-paypal-system.git`
+2. プロジェクトディレクトリに移動します：`cd pdf-paypal-system`
+3. Dockerイメージをビルドします：`docker build -t pdf-paypal-system .`
+4. コンテナを実行します：
+   ```
+   docker run -p 8080:8080 \
+   -e PAYPAL_CLIENT_ID=your_client_id \
+   -e PAYPAL_CLIENT_SECRET=your_client_secret \
+   -e PAYPAL_MODE=sandbox \
+   -e SECRET_KEY=your_random_secret \
+   pdf-paypal-system
+   ```
+5. ブラウザで `http://localhost:8080` にアクセスします。
 
 ---

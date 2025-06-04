@@ -80,25 +80,63 @@ if not config.get('paypal_mode') and PAYPAL_MODE:
 # これにより、設定変更時に全ての機能が正しく動作する
 # API_BASE = "https://api-m.sandbox.paypal.com" if config.get('paypal_mode') == "sandbox" else "https://api-m.paypal.com"
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24)  # セッション用シークレットキー
+def create_app():
+    app = Flask(__name__)
+    app.secret_key = os.urandom(24)  # セッション用シークレットキー
 
-# アップロードとダウンロードの設定
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-RESULTS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
-ALLOWED_EXTENSIONS = {'pdf'}
+    # アップロードとダウンロードの設定
+    upload_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+    results_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
+    allowed_extensions = {'pdf'}
 
-# フォルダが存在しない場合は作成
-for folder in [UPLOAD_FOLDER, RESULTS_FOLDER]:
-    if not os.path.exists(folder):
-        os.makedirs(folder)
+    # フォルダが存在しない場合は作成
+    for folder in [upload_folder, results_folder]:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
 
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
+    app.config['UPLOAD_FOLDER'] = upload_folder
+    app.config['RESULTS_FOLDER'] = results_folder
+    app.config['ALLOWED_EXTENSIONS'] = allowed_extensions
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
+
+    # 設定の初期化
+    initialize_config()
+    logger.info("アプリケーションを初期化しました")
+
+    # ここに全てのルート関数、ヘルパー関数を登録
+    # ...（既存のルートをすべてapp.routeで登録）...
+
+    # 既存の関数・ルートをappスコープに登録するためにglobals()を使う
+    global allowed_file, extract_text_from_pdf, get_paypal_access_token, create_paypal_payment_link
+    global index, payment_success, payment_cancel, upload_file, process_pdf, download_file
+    global settings, save_settings, test_connection, export_settings, import_settings
+    global history, check_payment_status, history_detail
+    app.add_url_rule('/', 'index', index)
+    app.add_url_rule('/payment_success', 'payment_success', payment_success)
+    app.add_url_rule('/payment_cancel', 'payment_cancel', payment_cancel)
+    app.add_url_rule('/upload', 'upload_file', upload_file, methods=['POST'])
+    app.add_url_rule('/process_pdf', 'process_pdf', process_pdf, methods=['POST'])
+    app.add_url_rule('/download/<filename>', 'download_file', download_file)
+    app.add_url_rule('/', 'index', index)
+    app.add_url_rule('/upload', 'upload_file', upload_file, methods=['POST'])
+    app.add_url_rule('/download/<filename>', 'download_file', download_file)
+    app.add_url_rule('/settings', 'settings', settings, methods=['GET'])
+    app.add_url_rule('/settings/save', 'save_settings', save_settings, methods=['POST'])
+    app.add_url_rule('/settings/test_connection', 'test_connection', test_connection, methods=['POST'])
+    app.add_url_rule('/export_settings', 'export_settings', export_settings)
+    app.add_url_rule('/import_settings', 'import_settings', import_settings, methods=['POST'])
+    app.add_url_rule('/history', 'history', history)
+    app.add_url_rule('/history/<filename>', 'history_detail', history_detail)
+    app.add_url_rule('/payment-success', 'payment_success', payment_success)
+    app.add_url_rule('/payment-cancel', 'payment_cancel', payment_cancel)
+    return app
+
+
+from flask import current_app
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    allowed = current_app.config['ALLOWED_EXTENSIONS']
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed
 
 def extract_text_from_pdf(pdf_path):
     """PDFからテキストを抽出し、高精度な請求金額抽出のための前処理を行う"""
@@ -316,7 +354,6 @@ def create_paypal_payment_link(amount, currency="JPY", description=""):
         print(f"\u6c7a済リンク作成エラー: {str(e)}")
         raise
 
-@app.route("/")
 def index():
     """インデックスページの表示"""
     # 最新の設定を取得
@@ -324,7 +361,6 @@ def index():
     paypal_mode = config.get('paypal_mode', 'sandbox')
     return render_template("index.html", mode=paypal_mode, paypal_mode=paypal_mode)
 
-@app.route("/payment-success")
 def payment_success():
     """決済成功時のリダイレクト先
     キャプチャ処理を実行して支払いを完了させる
@@ -434,12 +470,10 @@ def payment_success():
     
     return render_template("payment-success.html", payment_info=payment_info)
 
-@app.route("/payment-cancel")
 def payment_cancel():
     """決済キャンセル時のリダイレクト先"""
     return render_template("payment-cancel.html")
 
-@app.route('/upload', methods=['POST'])
 def upload_file():
     print('\n=== アップロードリクエスト受信 ===\n')
     print(f'フォームデータ: {request.form}')
@@ -666,12 +700,10 @@ def process_pdf(filepath, original_filename, manual_amount=None):
             'status': 'error'
         }
 
-@app.route('/download/<filename>')
 def download_file(filename):
     return send_from_directory(app.config['RESULTS_FOLDER'], filename)
 
 # 設定ページの表示
-@app.route('/settings', methods=['GET'])
 def settings():
     """設定ページを表示する"""
     # 現在の設定を取得
@@ -735,7 +767,6 @@ def settings():
                            paypal_status=paypal_status)
 
 # 設定の保存
-@app.route('/settings/save', methods=['POST'])
 def save_settings():
     """設定を保存する"""
     try:
@@ -794,7 +825,6 @@ def save_settings():
     return redirect(url_for('settings'))
 
 # PayPal接続テスト
-@app.route('/settings/test_connection', methods=['POST'])
 def test_connection():
     """Provides PayPal API credentials from the request to test the connection."""
     try:
@@ -813,7 +843,6 @@ def test_connection():
         return jsonify({'success': False, 'message': f'サーバーエラーが発生しました: {str(e)}'}), 500
 
 # 設定エクスポート
-@app.route('/export_settings')
 def export_settings():
     """設定をJSONファイルとしてエクスポートする"""
     try:
@@ -832,7 +861,6 @@ def export_settings():
         return redirect(url_for('settings', message=f'エクスポート失敗: {str(e)}', message_type='danger'))
 
 # 設定インポート
-@app.route('/import_settings', methods=['POST'])
 def import_settings():
     """設定をインポートする"""
     try:
@@ -859,7 +887,6 @@ def import_settings():
         return redirect(url_for('settings', message=f'インポート失敗: {str(e)}', message_type='danger'))
 
 # 履歴一覧ページ
-@app.route('/history')
 def history():
     history_data = []
     try:
@@ -962,7 +989,6 @@ def check_payment_status(order_id):
         return "UNKNOWN"
 
 # 履歴詳細ページ
-@app.route('/history/<filename>')
 def history_detail(filename):
     results = []
     try:
@@ -991,6 +1017,27 @@ def history_detail(filename):
         logger.error(f"履歴詳細読み込みエラー: {str(e)}")
     return render_template('history_detail.html', filename=filename, results=results)
 
+# 環境変数からポート番号を取得（クラウド環境対応）
+def get_port():
+    port = os.environ.get("PORT", 8080)
+    return int(port)
+
+# 設定ファイルが存在しない場合に初期設定を作成
+def initialize_config():
+    config = get_config()
+    if not config:
+        config = {
+            'paypal_client_id': os.environ.get("PAYPAL_CLIENT_ID", ""),
+            'paypal_client_secret': os.environ.get("PAYPAL_CLIENT_SECRET", ""),
+            'paypal_mode': os.environ.get("PAYPAL_MODE", "sandbox"),
+            'use_ai_ocr': config.get('use_ai_ocr', False)
+        }
+        save_config(config)
+    return config
+
+
 # アプリ実行
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8080)
+    app = create_app()
+    port = get_port()
+    app.run(debug=False, host='0.0.0.0', port=port)
