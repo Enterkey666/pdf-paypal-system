@@ -794,17 +794,23 @@ def save_settings():
     return redirect(url_for('settings'))
 
 # PayPal接続テスト
-@app.route('/settings/test_connection')
+@app.route('/settings/test_connection', methods=['POST'])
 def test_connection():
-    """設定されたPayPal API認証情報で接続テストを実行する"""
+    """Provides PayPal API credentials from the request to test the connection."""
     try:
-        if config_manager.test_paypal_connection():
-            return redirect(url_for('settings', message='PayPal API接続テスト成功', message_type='success'))
-        else:
-            return redirect(url_for('settings', message='PayPal API接続テスト失敗', message_type='danger'))
+        data = request.get_json()
+        client_id = data.get('paypal_client_id')
+        client_secret = data.get('paypal_client_secret')
+        mode = data.get('paypal_mode')
+
+        if not client_id or not client_secret or not mode:
+            return jsonify({'success': False, 'message': '必要な認証情報 (Client ID, Client Secret, Mode) が不足しています。'}), 400
+
+        success, message = config_manager.test_paypal_connection(client_id, client_secret, mode)
+        return jsonify({'success': success, 'message': message})
     except Exception as e:
-        logger.error(f"PayPal接続テストエラー: {str(e)}")
-        return redirect(url_for('settings', message=f'エラー: {str(e)}', message_type='danger'))
+        logger.error(f"PayPal接続テスト中に予期せぬエラーが発生しました: {str(e)}")
+        return jsonify({'success': False, 'message': f'サーバーエラーが発生しました: {str(e)}'}), 500
 
 # 設定エクスポート
 @app.route('/export_settings')

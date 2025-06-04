@@ -9,7 +9,8 @@
 import os
 import json
 import logging
-from typing import Dict, Any, Optional
+import paypalrestsdk
+from typing import Dict, Any, Optional, Tuple
 
 # ロガー設定
 logging.basicConfig(level=logging.INFO)
@@ -188,46 +189,59 @@ class ConfigManager:
             self.save_config(self.config)
             logger.info("環境変数から設定を更新しました")
             
-    def test_paypal_connection(self) -> bool:
+    def test_paypal_connection(self, client_id: Optional[str] = None, client_secret: Optional[str] = None, mode: Optional[str] = None) -> Tuple[bool, str]:
         """
         PayPal APIへの接続をテストする
         
         Returns:
             接続が成功したかどうか
         """
-        import requests
-        
-        client_id = self.config.get('paypal_client_id')
-        client_secret = self.config.get('paypal_client_secret')
-        mode = self.config.get('paypal_mode', 'sandbox')
-        
-        if not client_id or not client_secret:
-            logger.error("PayPal認証情報が設定されていません")
-            return False
-        
-        base_url = "https://api-m.sandbox.paypal.com" if mode == "sandbox" else "https://api-m.paypal.com"
-        url = f"{base_url}/v1/oauth2/token"
-        
+        # Use provided credentials if available, otherwise use stored config
+        test_client_id = client_id if client_id is not None else self.config.get('paypal_client_id')
+        test_client_secret = client_secret if client_secret is not None else self.config.get('paypal_client_secret')
+        test_mode = mode if mode is not None else self.config.get('paypal_mode', 'sandbox')
+
+        if not test_client_id or not test_client_secret:
+            msg = "PayPal Client ID または Client Secret が設定されていません。"
+            logger.error(msg)
+            return False, msg
+
         try:
-            response = requests.post(
-                url,
-                auth=(client_id, client_secret),
-                headers={
-                    "Accept": "application/json",
-                    "Accept-Language": "en_US"
-                },
-                data={"grant_type": "client_credentials"}
-            )
+            paypalrestsdk.configure({
+                "mode": test_mode,
+                "client_id": test_client_id,
+                "client_secret": test_client_secret
+            })
             
-            if response.status_code == 200:
-                logger.info("PayPal API接続テスト成功")
-                return True
-            else:
-                logger.error(f"PayPal API接続テストエラー: {response.status_code}")
-                return False
+            # Perform a simple API call to test the connection
+            payments = paypalrestsdk.Payment.all({'count': 1}) # type: ignore
+            # If the above call doesn't raise an exception, the connection is successful
+            msg = "PayPal APIへの接続に成功しました。"
+            logger.info(msg)
+            return True, msg
+        except paypalrestsdk.exceptions.PayPalError as e:
+            # Handle PayPal specific errors (e.g., authentication failure)
+            error_message = str(e)
+            if hasattr(e, 'message') and isinstance(e.message, dict) and 'message' in e.message: # type: ignore
+                error_message = e.message['message'] # type: ignore
+            elif hasattr(e, 'response') and hasattr(e.response, 'text'): # type: ignore
+                 try:
+                    error_details = json.loads(e.response.text) # type: ignore
+                    if 'error_description' in error_details:
+                        error_message = error_details['error_description']
+                    elif 'message' in error_details:
+                        error_message = error_details['message']
+                 except json.JSONDecodeError:
+                    error_message = e.response.text # type: ignore
+
+            full_msg = f"PayPal API接続テストエラー: {error_message}"
+            logger.error(full_msg)
+            return False, full_msg
         except Exception as e:
-            logger.error(f"PayPal API接続テスト例外: {str(e)}")
-            return False
+            # Handle other exceptions (e.g., network issues)
+            full_msg = f"PayPal API接続テスト中に予期せぬエラーが発生しました: {str(e)}"
+            logger.error(full_msg)
+            return False, full_msg
 
 
 # シングルトンインスタンス

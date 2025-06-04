@@ -133,6 +133,13 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <div class="form-group mt-3 mb-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="test_paypal_connection_button">
+                                    <i class="bi bi-shield-check"></i> PayPal接続テスト
+                                </button>
+                                <div id="paypal_connection_status" class="mt-2" style="min-height: 20px;"></div>
+                            </div>
                             
                             <hr>
                             
@@ -239,7 +246,7 @@
                     </div>
                     <div class="card-body">
                         <p><strong>アプリケーションバージョン:</strong> 1.0.0</p>
-                        <p><strong>最終更新日:</strong> 2025年4月18日</p>
+                        <p><strong>最終更新日:</strong> 2025年6月4日</p>
                         
                         <hr>
                         
@@ -344,6 +351,54 @@
             } else {
                 ocrSettings.classList.add('d-none');
             }
+        });
+
+        // PayPal接続テスト
+        document.getElementById('test_paypal_connection_button').addEventListener('click', function() {
+            const button = this;
+            const statusDiv = document.getElementById('paypal_connection_status');
+            const clientId = document.getElementById('paypal_client_id').value;
+            const clientSecret = document.getElementById('paypal_client_secret').value;
+            const mode = document.getElementById('paypal_mode').value;
+
+            statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
+            button.disabled = true;
+
+            fetch('/settings/test_connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    // 'X-CSRFToken': '/* csrf_token would go here */' // CSRF保護が有効な場合
+                },
+                body: JSON.stringify({
+                    paypal_client_id: clientId,
+                    paypal_client_secret: clientSecret,
+                    paypal_mode: mode
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    // Handle HTTP errors (e.g., 400, 500)
+                    return response.json().then(errData => {
+                        throw new Error(errData.message || `サーバーエラー: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${data.message}</span>`;
+                } else {
+                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${data.message}</span>`;
+                }
+            })
+            .catch(error => {
+                console.error('PayPal接続テストエラー:', error);
+                statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${error.message || '接続テスト中にエラーが発生しました。'}</span>`;
+            })
+            .finally(() => {
+                button.disabled = false;
+            });
         });
     </script>
 </body>

@@ -3,3 +3,5 @@ python-dotenv
 requests
 Flask
 Werkzeug
+paypalrestsdk
+pytesseract
