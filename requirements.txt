@@ -13,5 +13,5 @@ pdf2image==1.16.3
 opencv-python==4.8.0.74
 pdfminer.six==20221105
 google-cloud-vision==3.4.0
-az-cognitive-services==0.2.0
+# az-cognitive-services removed for compatibility
 boto3==1.28.38
