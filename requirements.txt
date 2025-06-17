@@ -15,3 +15,5 @@ pdfminer.six==20221105
 google-cloud-vision==3.4.0
 # az-cognitive-services removed for compatibility
 boto3==1.28.38
+# Install local package
+-e .
