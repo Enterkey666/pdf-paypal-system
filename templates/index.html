@@ -41,6 +41,34 @@
             letter-spacing: 0.5px;
         }
         
+        .nav-link {
+            padding: 0.6rem 1.2rem !important;
+            min-width: 120px;
+            text-align: center;
+            margin: 0 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* ユーザー状態バッジのスタイル */
+        .badge {
+            font-weight: 500;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            padding: 0.6rem 1.2rem !important;
+            min-width: 120px;
+            text-align: center;
+        }
+        
+        .badge:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+        }
+        
         .card {
             border: none;
             border-radius: var(--border-radius);
@@ -415,6 +443,75 @@
         .animate__animated {
             animation-duration: 0.8s;
         }
+        
+        /* テーブルのレスポンシブ対応を強化 */
+        .table-responsive {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 1rem;
+        }
+        
+        /* テーブルセルのスタイル改善 */
+        .table td, .table th {
+            vertical-align: middle;
+            padding: 0.75rem;
+            word-break: break-word;
+        }
+        
+        /* 顧客名のスタイル */
+        .customer-name {
+            font-weight: 500;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: normal;
+            line-height: 1.3;
+        }
+        
+        /* ファイル名のスタイル */
+        .filename {
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        /* 金額のスタイル */
+        .amount {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: #198754;
+        }
+        
+        /* 選択UIの改善 */
+        .amount-selection {
+            max-width: 250px;
+        }
+        
+        /* 処理結果表示の改善 */
+        .result-row {
+            transition: background-color 0.3s ease;
+        }
+        .result-row:hover {
+            background-color: rgba(0,123,255,0.05);
+        }
+        
+        /* モバイル対応 */
+        @media (max-width: 768px) {
+            .table {
+                font-size: 0.9rem;
+            }
+            .btn-sm {
+                padding: 0.25rem 0.5rem;
+                font-size: 0.75rem;
+            }
+            .customer-name, .filename {
+                max-width: 120px;
+            }
+            .card-body {
+                padding: 1rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -437,12 +534,31 @@
                     <li class="nav-item mx-1">
                         <a class="nav-link active rounded-pill px-3 py-2" href="/"><i class="bi bi-house-fill me-1"></i> ホーム</a>
                     </li>
-                    <li class="nav-item mx-1">
-                        <a class="nav-link rounded-pill px-3 py-2" href="/history"><i class="bi bi-clock-history me-1"></i> 履歴</a>
-                    </li>
+                    <!-- 設定ページへのリンク（すべてのユーザーに表示） -->
                     <li class="nav-item mx-1">
                         <a class="nav-link rounded-pill px-3 py-2" href="/settings"><i class="bi bi-gear-fill me-1"></i> 設定</a>
                     </li>
+                    <!-- 履歴ページへのリンク（すべてのユーザーに表示） -->
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2" href="/history"><i class="bi bi-clock-history me-1"></i> 履歴</a>
+                    </li>
+                    {% if session.get('admin_logged_in') %}
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2 bg-danger text-white" href="/logout"><i class="bi bi-box-arrow-right me-1"></i> ログアウト</a>
+                    </li>
+                    <!-- 管理者バッジ -->
+                    <li class="nav-item mx-1 d-flex align-items-center">
+                        <span class="badge bg-primary rounded-pill px-3 py-2"><i class="bi bi-shield-check me-1"></i> 管理者</span>
+                    </li>
+                    {% else %}
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2 bg-success text-white" href="/login"><i class="bi bi-box-arrow-in-right me-1"></i> 管理者ログイン</a>
+                    </li>
+                    <!-- ゲストバッジ -->
+                    <li class="nav-item mx-1 d-flex align-items-center">
+                        <span class="badge bg-secondary rounded-pill px-3 py-2"><i class="bi bi-person me-1"></i> ゲスト</span>
+                    </li>
+                    {% endif %}
                 </ul>
             </div>
         </div>
@@ -455,7 +571,7 @@
                 <div class="position-absolute" style="bottom: -10px; left: 50%; transform: translateX(-50%); width: 150px; height: 4px; background: linear-gradient(90deg, var(--primary-color), var(--accent-color)); border-radius: 2px;"></div>
             </div>
             <p class="lead text-muted mt-4 mb-0">請求書からの情報抽出と決済リンク生成を自動化</p>
-            {% if mode == 'sandbox' %}
+            {% if paypal_mode|lower == 'sandbox' %}
             <span class="mode-badge sandbox mt-3 animate__animated animate__fadeIn animate__delay-1s">Sandbox モード</span>
             {% else %}
             <span class="mode-badge live mt-3 animate__animated animate__fadeIn animate__delay-1s">本番モード</span>
@@ -517,7 +633,7 @@
                                 <button type="button" class="btn btn-primary btn-lg px-4 py-2" id="browse-btn">
                                     <i class="bi bi-folder2-open me-2"></i>ファイルを選択
                                 </button>
-                                <input type="file" name="files[]" id="file-input" multiple accept=".pdf" hidden>
+                                <input type="file" name="file" id="file-input" multiple accept=".pdf" hidden>
                             </div>
                             
                             <div class="file-list mt-4" id="file-list"></div>
@@ -544,8 +660,22 @@
                                         <span id="loading-spinner" class="spinner-border spinner-border-sm position-absolute top-50 start-50 translate-middle d-none" role="status" aria-hidden="true"></span>
                                     </button>
                                 </div>
-                                <div class="progress mt-3 d-none" id="progress-container">
-                                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                                <!-- プログレスバー -->
+                                <div id="progress-container" class="mt-3 d-none">
+                                    <div class="progress" style="height: 15px;">
+                                        <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 0%"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mt-2">
+                                        <div id="progress-message" class="text-primary fw-bold">処理を準備中...</div>
+                                        <div id="progress-percentage" class="text-primary fw-bold">0%</div>
+                                    </div>
+                                    <div class="text-center mt-3">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p class="mt-2 text-primary fw-bold">しばらくお待ちください</p>
+                                        <p class="text-muted small">PDFの内容を分析中です</p>
+                                    </div>
                                 </div>
                             </div>
                         </form>
@@ -557,13 +687,30 @@
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
+        // コンソールログを抑制
+        const originalConsoleLog = console.log;
+        console.log = function() {
+            // 開発モードでのみログを表示
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                originalConsoleLog.apply(console, arguments);
+            }
+        };
+        
+        // runtime.lastErrorを抑制するためのエラーハンドラー
+        window.addEventListener('error', function(event) {
+            if (event.message && event.message.includes('runtime.lastError')) {
+                event.preventDefault();
+                return true;
+            }
+        });
+        
         document.addEventListener('DOMContentLoaded', function() {
             const dragArea = document.getElementById('drag-area');
             const fileInput = document.getElementById('file-input');
             const browseBtn = document.getElementById('browse-btn');
             const fileList = document.getElementById('file-list');
             const submitBtn = document.getElementById('submit-btn');
-            const progressBar = document.querySelector('.progress-bar');
+            const progressBar = document.getElementById('progress-bar');
             const progressContainer = document.getElementById('progress-container');
             const files = new Set();
             
@@ -698,7 +845,16 @@
             
             // ファイル入力を更新
             function updateFileInput() {
-                console.log('ファイル更新: ファイル数 =', files.size);
+                try {
+                    if (files.size > 0) {
+                        let fileNames = [];
+                        files.forEach(file => {
+                            fileNames.push(file.name);
+                        });
+                    }
+                } catch (e) {
+                    // エラーを抑制
+                }
                 
                 // ファイルリストが空の場合は非表示
                 if (files.size === 0) {
@@ -706,6 +862,10 @@
                 } else {
                     fileList.classList.remove('empty');
                 }
+                
+                // ドラッグエリアを常に有効にする
+                dragArea.classList.remove('disabled');
+                browseBtn.disabled = false;
             }
             
             // ファイルサイズのフォーマット
@@ -729,7 +889,25 @@
             }
             
             // フォーム送信処理
+            let isSubmitting = false; // 送信中フラグを追加
             document.getElementById('upload-form').addEventListener('submit', function(e) {
+                e.preventDefault(); // デフォルトの送信をキャンセル
+                
+                // 既に送信中の場合は処理を中止
+                if (isSubmitting) {
+                    console.log('既に処理中のため、重複送信をブロックしました');
+                    return false;
+                }
+                
+                // ファイルが選択されていない場合は処理を中止
+                if (files.size === 0) {
+                    showWarningToast('ファイルを選択してください');
+                    return false;
+                }
+                
+                // 送信中フラグを設定
+                isSubmitting = true;
+                
                 const buttonText = document.getElementById('button-text');
                 const loadingSpinner = document.getElementById('loading-spinner');
                 
@@ -738,19 +916,558 @@
                 loadingSpinner.classList.remove('d-none');
                 submitBtn.disabled = true;
                 
-                // プログレスバーの表示
+                // プログレスバーを表示
                 progressContainer.classList.remove('d-none');
+                
+                // FormDataオブジェクトを新規作成（フォーム要素から継承せず）
+                const formData = new FormData();
+                
+                // ファイルをFormDataに追加
+                const file = files.values().next().value;
+                console.log('アップロードするファイル:', file.name, file.type, file.size);
+                formData.append('file', file);
+                
+                // デバッグ用にフォームデータの内容を確認
+                console.log('フォームデータのキー:');
+                for (let key of formData.keys()) {
+                    console.log('- ' + key);
+                }
+                
+                // 金額入力があれば追加
+                try {
+                    const amountInput = document.getElementById('amount-input');
+                    if (amountInput && amountInput.value) {
+                        formData.set('amount', amountInput.value);
+                    }
+                } catch (e) {
+                    console.log('金額入力の追加中にエラーが発生しました');
+                }
                 
                 // プログレスバーのアニメーション
                 let progress = 0;
+                const progressBar = document.getElementById('progress-bar');
+                const progressPercentage = document.getElementById('progress-percentage');
+                const progressMessage = document.getElementById('progress-message');
                 const interval = setInterval(() => {
-                    progress += Math.random() * 15;
+                    progress += 1 + Math.random() * 2;
                     if (progress > 90) {
                         progress = 90 + Math.random() * 5;
                         clearInterval(interval);
                     }
-                    progressBar.style.width = `${Math.min(progress, 95)}%`;
+                    const currentProgress = Math.min(progress, 95);
+                    progressBar.style.width = `${currentProgress}%`;
+                    progressPercentage.textContent = `${Math.round(currentProgress)}%`;
+                    
+                    // 進捗状況に応じてメッセージを更新
+                    if (currentProgress < 20) {
+                        progressMessage.textContent = 'PDFを読み込み中...';
+                    } else if (currentProgress < 40) {
+                        progressMessage.textContent = 'テキスト抽出中...';
+                    } else if (currentProgress < 60) {
+                        progressMessage.textContent = '顧客情報を分析中...';
+                    } else if (currentProgress < 80) {
+                        progressMessage.textContent = '金額情報を抽出中...';
+                    } else {
+                        progressMessage.textContent = 'PayPal決済リンクを生成中...';
+                    }
                 }, 500);
+                
+                // デバッグ情報を削除
+                
+                // Fetch APIを使用してフォームデータを送信
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('サーバーエラーが発生しました: ' + response.status);
+                    }
+                    console.log('レスポンスステータス:', response.status);
+                    console.log('レスポンスヘッダー:', [...response.headers.entries()]);
+                    
+                    // レスポンスのコンテントタイプを確認
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        return response.json(); // JSONとしてレスポンスを処理
+                    } else {
+                        return response.text().then(text => {
+                            console.log('レスポンステキスト:', text.substring(0, 500) + '...');
+                            try {
+                                // テキストをJSONとしてパースしてみる
+                                return JSON.parse(text);
+                            } catch (e) {
+                                // JSONでない場合はテキストとして処理
+                                console.error('レスポンスのJSONパースエラー:', e);
+                                throw new Error('レスポンスの形式が不正です');
+                            }
+                        });
+                    }
+                })
+                .then(data => {
+                    // アップロード成功後、PDFの処理を開始
+                    if (data.success && data.filename) {
+                        progressMessage.textContent = 'PDFの処理を開始しています...';
+                        
+                        // /processエンドポイントを呼び出し
+                        return fetch('/process', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                filename: data.filename
+                            })
+                        })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('PDF処理中にエラーが発生しました: ' + response.status);
+                            }
+                            return response.json();
+                        });
+                    } else {
+                        // アップロードに失敗した場合
+                        throw new Error(data.error || 'ファイルのアップロードに失敗しました');
+                    }
+                })
+                .then(data => {
+                    // プログレスバーを完了状態にする
+                    progressBar.style.width = '100%';
+                    progressPercentage.textContent = '100%';
+                    
+                    // レスポンスデータの詳細をログ出力
+                    console.log('処理結果データ:', data);
+                    if (data.results && data.results.length > 0) {
+                        console.log('最初の結果詳細:', JSON.stringify(data.results[0], null, 2));
+                        
+                        // 金額データの構造を確認
+                        const firstResult = data.results[0];
+                        if (firstResult.amount) {
+                            console.log('金額データ型:', typeof firstResult.amount);
+                            console.log('金額データ値:', firstResult.amount);
+                            
+                            if (typeof firstResult.amount === 'object') {
+                                console.log('金額オブジェクト構造:', firstResult.amount);
+                                console.log('選択された金額:', firstResult.amount.selected);
+                                console.log('金額候補:', firstResult.amount.alternatives);
+                            }
+                        }
+                    }
+                    progressMessage.textContent = '処理完了！';
+                    clearInterval(interval);
+                    
+                    // エラーがあれば表示
+                    if (data.error) {
+                        showWarningToast(data.error);
+                        // 送信ボタンを元に戻す
+                        buttonText.textContent = '処理開始';
+                        loadingSpinner.classList.add('d-none');
+                        submitBtn.disabled = false;
+                        progressContainer.classList.add('d-none');
+                        // 送信中フラグをリセット
+                        isSubmitting = false;
+                        return;
+                    }
+                    
+                    // 結果を表示するためのコンテナを作成
+                    const uploadForm = document.getElementById('upload-form');
+                    uploadForm.classList.add('d-none'); // フォームを非表示
+                    
+                    // 結果表示コンテナを作成
+                    const resultsContainer = document.createElement('div');
+                    resultsContainer.id = 'results-container';
+                    resultsContainer.className = 'container mt-4 animate__animated animate__fadeIn';
+                    resultsContainer.innerHTML = `
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h3 class="mb-0"><i class="bi bi-check-circle-fill me-2"></i>処理結果</h3>
+                            </div>
+                            <div class="card-body">
+                                <h4 class="mb-3">抽出結果と決済リンク</h4>
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>ファイル名</th>
+                                                <th>顧客名</th>
+                                                <th>金額</th>
+                                                <th>決済リンク</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="results-table-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="mt-4">
+                                    <button id="back-button" class="btn btn-secondary">
+                                        <i class="bi bi-arrow-left me-2"></i>戻る
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // コンテナをページに追加
+                    // 既に定義されているuploadForm変数を再利用
+                    if (uploadForm) {
+                        const parentElement = uploadForm.parentNode;
+                        parentElement.insertBefore(resultsContainer, uploadForm.nextSibling);
+                    } else {
+                        // フォームが見つからない場合は、ページのメインコンテンツエリアに追加
+                        const contentArea = document.querySelector('.card-body');
+                        if (contentArea) {
+                            contentArea.appendChild(resultsContainer);
+                        } else {
+                            // 最終手段として、bodyに直接追加
+                            document.body.appendChild(resultsContainer);
+                        }
+                    }
+                    
+                    // 戻るボタンのイベントリスナーを追加
+                    document.getElementById('back-button').addEventListener('click', function() {
+                        // 結果表示を非表示にしてアップロードフォームを表示
+                        document.getElementById('results-container').remove();
+                        document.getElementById('upload-form').classList.remove('d-none');
+                        
+                        // 送信ボタンを元に戻す
+                        buttonText.textContent = '処理開始';
+                        loadingSpinner.classList.add('d-none');
+                        submitBtn.disabled = false;
+                        progressContainer.classList.add('d-none');
+                        
+                        // 送信中フラグをリセット
+                        isSubmitting = false;
+                    });
+                    
+                    // 結果をテーブルに追加
+                    const tableBody = document.getElementById('results-table-body');
+                    // データ構造のチェックと安全な処理
+                    if (data && data.results && Array.isArray(data.results)) {
+                        data.results.forEach((result, index) => {
+                        const row = document.createElement('tr');
+                        row.className = 'result-row';
+                        row.setAttribute('data-index', index);
+                        
+                        if (result.error) {
+                            row.innerHTML = `
+                                <td>${result.filename || '不明'}</td>
+                                <td colspan="3" class="text-danger">${result.error}</td>
+                            `;
+                        } else {
+                            // 顧客名の整形（改行や余分な空白を除去）
+                            const customerName = result.customer_name ? result.customer_name.replace(/\n/g, ' ').trim() : '抽出できませんでした';
+                            
+                            // 金額の整形（数字以外の文字を除去し、カンマ区切りを追加）
+                            const formatAmount = (amount) => {
+                                if (!amount) return '';
+                                // 数字以外を除去して整数値に変換
+                                const numericAmount = amount.toString().replace(/[^0-9]/g, '');
+                                // カンマ区切りを追加
+                                return numericAmount ? numericAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '0';
+                            };
+                            
+                            // 金額表示用の整形 - 新しいオブジェクト構造に対応
+                            let numericAmount = '';
+                            let formattedAmount = '抽出できませんでした';
+                            
+                            // 金額がオブジェクトかどうかをチェック
+                            if (result.amount) {
+                                if (typeof result.amount === 'object' && result.amount.selected) {
+                                    // 新しい構造: {selected: "金額", alternatives: [...]}の場合
+                                    numericAmount = result.amount.selected.toString().replace(/[^0-9]/g, '');
+                                } else if (typeof result.amount === 'string' || typeof result.amount === 'number') {
+                                    // 古い構造: 単純な文字列または数値の場合
+                                    numericAmount = result.amount.toString().replace(/[^0-9]/g, '');
+                                }
+                                formattedAmount = numericAmount ? `¥${formatAmount(numericAmount)}` : '抽出できませんでした';
+                            }
+                            
+                            // 決済リンク表示部分
+                            let paymentLinkHtml = '';
+                            if (result.payment_link) {
+                                // 既に決済リンクがある場合
+                                paymentLinkHtml = `
+                                    <a href="${result.payment_link}" target="_blank" class="btn btn-sm btn-success">
+                                        <i class="bi bi-link-45deg me-1"></i>決済リンク
+                                    </a>`;
+                            } else {
+                                // 決済リンクを生成するボタンを表示
+                                paymentLinkHtml = `
+                                     <button class="btn btn-sm btn-primary generate-payment-link" data-index="${index}" data-customer="${customerName}" data-amount="${numericAmount}">
+                                         <i class="bi bi-link-45deg me-1"></i>決済リンク生成
+                                     </button>
+                                     ${result.amount && typeof result.amount === 'object' && result.amount.alternatives && result.amount.alternatives.length > 1 ? 
+                                     `<div class="mt-1 small">
+                                        <a href="#" class="show-alternatives text-primary" data-bs-toggle="modal" data-bs-target="#amountModal" data-index="${index}">他の候補を表示</a>
+                                     </div>` : ''}`;
+                            }
+                            
+                            // 行全体を組み立て
+                            row.innerHTML = `
+                                <td class="filename">${result.filename || '不明'}</td>
+                                <td class="customer-name text-truncate" style="max-width: 200px;" title="${customerName}">${customerName}</td>
+                                <td class="amount"><span class="fw-bold">${formattedAmount}</span></td>
+                                <td class="payment-link-cell">${paymentLinkHtml}</td>
+                            `;
+                        }
+                        
+                        // 作成した行をテーブルに追加
+                        tableBody.appendChild(row);
+                        console.log('行を追加しました:', index, result.filename);
+                    });
+                    } else {
+                        // data.resultsが存在しないか配列でない場合のエラー処理
+                        console.error('結果データが不正な形式です:', data);
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'データ形式エラー',
+                            text: '処理結果のデータ形式が不正です。管理者にお問い合わせください。',
+                            confirmButtonText: '了解'
+                        });
+                    }
+                    
+                    // 結果がない場合のメッセージ
+                    if (!data.results || data.results.length === 0) {
+                        const emptyRow = document.createElement('tr');
+                        emptyRow.innerHTML = '<td colspan="4" class="text-center py-3">結果がありません</td>';
+                        tableBody.appendChild(emptyRow);
+                        console.log('結果がありません');
+                    }
+                    
+                    // モーダルを追加 (金額候補選択用)
+                    if (!document.getElementById('amountModal')) {
+                        const modalHtml = `
+                        <div class="modal fade" id="amountModal" tabindex="-1" aria-labelledby="amountModalLabel" aria-hidden="true">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title" id="amountModalLabel">金額候補</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body" id="amount-alternatives-container">
+                                        <div class="list-group" id="amount-alternatives-list"></div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">閉じる</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>`;
+                        document.body.insertAdjacentHTML('beforeend', modalHtml);
+                    }
+                    
+                    // 金額候補表示のイベントリスナー
+                    document.querySelectorAll('.show-alternatives').forEach(link => {
+                        link.addEventListener('click', function(e) {
+                            e.preventDefault();
+                            const index = this.getAttribute('data-index');
+                            const result = data.results[index];
+                            const alternativesList = document.getElementById('amount-alternatives-list');
+                            alternativesList.innerHTML = '';
+                            
+                            if (result.amount && result.amount.alternatives) {
+                                result.amount.alternatives.forEach((alt, altIndex) => {
+                                    const isSelected = alt.value === result.amount.selected;
+                                    const listItem = document.createElement('button');
+                                    listItem.className = `list-group-item list-group-item-action ${isSelected ? 'active' : ''}`;
+                                    listItem.innerHTML = `
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>¥${formatAmount(alt.value.replace(/[^0-9]/g, ''))}</strong>
+                                                <div class="small text-muted">${alt.context || '候補'}</div>
+                                            </div>
+                                            ${isSelected ? '<span class="badge bg-success">選択中</span>' : ''}
+                                        </div>`;
+                                    
+                                    if (!isSelected) {
+                                        listItem.addEventListener('click', function() {
+                                            // 選択した金額を更新する処理を追加
+                                            const rowElement = document.querySelector(`tr[data-index="${index}"]`);
+                                            if (rowElement) {
+                                                const amountCell = rowElement.querySelector('.amount span');
+                                                if (amountCell) {
+                                                    const newAmount = alt.value.replace(/[^0-9]/g, '');
+                                                    amountCell.textContent = `¥${formatAmount(newAmount)}`;
+                                                    
+                                                    // 決済リンク生成ボタンのdata-amountも更新
+                                                    const generateBtn = rowElement.querySelector('.generate-payment-link');
+                                                    if (generateBtn) {
+                                                        generateBtn.setAttribute('data-amount', newAmount);
+                                                    }
+                                                    
+                                                    // モーダルを閉じる
+                                                    const modal = bootstrap.Modal.getInstance(document.getElementById('amountModal'));
+                                                    modal.hide();
+                                                    
+                                                    showInfoToast('金額を更新しました');
+                                                }
+                                            }
+                                        });
+                                    }
+                                    
+                                    alternativesList.appendChild(listItem);
+                                });
+                            } else {
+                                alternativesList.innerHTML = '<div class="list-group-item">候補がありません</div>';
+                            }
+                        });
+                    });
+                    
+                    // 決済リンク生成ボタンのイベントリスナーを設定
+                    document.querySelectorAll('.generate-payment-link').forEach(button => {
+                        button.addEventListener('click', function() {
+                            const index = this.getAttribute('data-index');
+                            const customer = this.getAttribute('data-customer');
+                            const amount = this.getAttribute('data-amount');
+                            
+                            console.log('決済リンク生成開始:', {
+                                index: index,
+                                customer: customer,
+                                amount: amount,
+                                result: data.results[index]
+                            });
+                            
+                            // 金額データの構造を確認
+                            if (data.results[index].amount) {
+                                console.log('金額データ型:', typeof data.results[index].amount);
+                                console.log('金額データ値:', data.results[index].amount);
+                                
+                                if (typeof data.results[index].amount === 'object') {
+                                    console.log('選択された金額:', data.results[index].amount.selected);
+                                    console.log('送信される金額:', amount);
+                                }
+                            }
+                            
+                            if (!amount) {
+                                showWarningToast('金額が設定されていません');
+                                return;
+                            }
+                            
+                            // ボタンを無効化して処理中表示
+                            this.disabled = true;
+                            const originalText = this.innerHTML;
+                            this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                            
+                            // 決済リンク生成APIを呼び出し
+                            fetch('/generate_payment_link', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    customer: customer,
+                                    amount: amount,
+                                    index: index
+                                })
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.payment_link) {
+                                    // 金額表示セルも更新（カンマ区切りで表示）
+                                    const formattedAmount = data.amount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                                    const amountCell = document.querySelector(`.result-row[data-index="${index}"] td:nth-child(3)`);
+                                    if (amountCell) {
+                                        amountCell.innerHTML = `<span class="amount">¥${formattedAmount}</span>`;
+                                    }
+                                    
+                                    // 決済リンクボタンに置き換え
+                                    const cell = this.parentElement;
+                                    cell.innerHTML = `
+                                        <a href="${data.payment_link}" target="_blank" class="btn btn-sm btn-success">
+                                            <i class="bi bi-link-45deg me-1"></i>決済リンク
+                                        </a>
+                                    `;
+                                    
+                                    showSuccessToast('決済リンクを生成しました');
+                                } else {
+                                    // エラー表示
+                                    this.disabled = false;
+                                    this.innerHTML = originalText;
+                                    showWarningToast(data.error || '決済リンクの生成に失敗しました');
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error:', error);
+                                this.disabled = false;
+                                this.innerHTML = originalText;
+                                showWarningToast('エラーが発生しました: ' + error.message);
+                            });
+                        });
+                    });
+                    
+                    // 成功メッセージを表示
+                    showSuccessToast('処理が完了しました！');
+                    
+                    // 送信中フラグをリセット
+                    isSubmitting = false;
+                    
+                    // トースト通知
+                    function showSuccessToast(message) {
+                        Swal.mixin({
+                            toast: true,
+                            position: 'top-end',
+                            showConfirmButton: false,
+                            timer: 3000,
+                            timerProgressBar: true,
+                            didOpen: (toast) => {
+                                toast.addEventListener('mouseenter', Swal.stopTimer)
+                                toast.addEventListener('mouseleave', Swal.resumeTimer)
+                            }
+                        }).fire({
+                            icon: 'success',
+                            title: message
+                        });
+                    }
+                    
+                    function showWarningToast(message) {
+                        Swal.mixin({
+                            toast: true,
+                            position: 'top-end',
+                            showConfirmButton: false,
+                            timer: 4000,
+                            timerProgressBar: true
+                        }).fire({
+                            icon: 'warning',
+                            title: message
+                        });
+                    }
+                    
+                    function showInfoToast(message) {
+                        Swal.mixin({
+                            toast: true,
+                            position: 'top-end',
+                            showConfirmButton: false,
+                            timer: 2000,
+                            timerProgressBar: true
+                        }).fire({
+                            icon: 'info',
+                            title: message
+                        });
+                    }
+                    
+                    // フラッシュメッセージがあれば表示
+                    const flashNotification = document.getElementById('flash-notification');
+                    if (flashNotification) {
+                        flashNotification.classList.add('show');
+                        setTimeout(() => {
+                            flashNotification.classList.remove('show');
+                        }, 5000);
+                    }
+                })
+                .catch(error => {
+                    showWarningToast('エラーが発生しました: ' + error.message);
+                    
+                    // エラー時にボタンを元に戻す
+                    buttonText.textContent = '処理開始';
+                    loadingSpinner.classList.add('d-none');
+                    submitBtn.disabled = false;
+                    progressContainer.classList.add('d-none');
+                    
+                    // 送信中フラグをリセット
+                    isSubmitting = false;
+                });
+                
+                return false; // フォームのデフォルト送信を防止
             });
             
             // トースト通知

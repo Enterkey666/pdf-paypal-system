@@ -64,13 +64,16 @@
                                         {% for item in results %}
                                         <tr>
                                             <td>{{ item.filename or item.ファイル名 }}</td>
-                                            <td class="fw-bold fs-5 text-primary">{{ item.customer or item.顧客名 }}</td>
-                                            <td>{{ item.amount or item.金額 }} 円</td>
+                                            <td class="fw-bold fs-5 text-primary">{{ item.formatted_customer or item.customer or item.顧客名 }}</td>
+                                            <td>{{ item.formatted_amount or item.amount or item.金額 }}</td>
                                             <td>
                                                 {% if item.payment_link or item.決済リンク %}
-                                                    <a href="{{ item.payment_link or item.決済リンク }}" target="_blank" class="btn btn-sm btn-primary">
+                                                    <a href="{{ item.payment_link or item.決済リンク }}" target="_blank" class="btn btn-sm btn-primary" onclick="window.open('{{ item.payment_link or item.決済リンク }}', '_blank'); return true;">
                                                         <i class="bi bi-link-45deg"></i> 決済リンク
                                                     </a>
+                                                    <button class="btn btn-sm btn-outline-secondary ms-1 copy-link-btn" data-link="{{ item.payment_link or item.決済リンク }}" title="リンクをコピー">
+                                                        <i class="bi bi-clipboard"></i>
+                                                    </button>
                                                 {% else %}
                                                     <span class="text-muted">リンクなし</span>
                                                 {% endif %}
@@ -100,5 +103,49 @@
             </div>
         </div>
     </div>
+
+    <!-- コピー成功時の通知モーダル -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 5">
+        <div id="copyToast" class="toast align-items-center text-white bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="bi bi-check-circle-fill me-2"></i> 決済リンクをクリップボードにコピーしました
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // リンクコピー機能
+        document.addEventListener('DOMContentLoaded', function() {
+            // コピーボタンのイベントリスナーを設定
+            const copyButtons = document.querySelectorAll('.copy-link-btn');
+            copyButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const link = this.getAttribute('data-link');
+                    navigator.clipboard.writeText(link).then(() => {
+                        // コピー成功時の通知を表示
+                        const toast = new bootstrap.Toast(document.getElementById('copyToast'));
+                        toast.show();
+                    }).catch(err => {
+                        console.error('クリップボードへのコピーに失敗しました:', err);
+                    });
+                });
+            });
+
+            // 決済リンクのクリックイベントを強化
+            const paymentLinks = document.querySelectorAll('a[href^="https://www.paypal.com"]');
+            paymentLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    // デフォルトの動作を防止
+                    e.preventDefault();
+                    // 新しいウィンドウでリンクを開く
+                    const url = this.getAttribute('href');
+                    window.open(url, '_blank');
+                });
+            });
+        });
+    </script>
 </body>
 </html>

@@ -46,6 +46,11 @@
                     <div class="card-body">
                         <h5 class="card-title">過去の処理履歴</h5>
                         <p class="card-text">過去に処理したPDFファイルと生成された決済リンクの履歴です。</p>
+                        <div class="my-3">
+                            <button class="btn btn-danger" id="deleteAllWithPaypalBtn" data-bs-toggle="modal" data-bs-target="#deleteAllWithPaypalConfirmModal">
+                                <i class="bi bi-trash3-fill"></i> PayPal連携 全履歴削除
+                            </button>
+                        </div>
                         
                         {% if history_data %}
                             <div class="table-responsive">
@@ -75,9 +80,18 @@
                                                 </td>
                                                 <td>{{ item.count }} 件</td>
                                                 <td>
-                                                    <a href="/history/{{ item.filename }}" class="btn btn-sm btn-primary">
-                                                        <i class="bi bi-search"></i> 詳細を見る
-                                                    </a>
+                                                    <div class="d-flex gap-2">
+                                                        <a href="/history/{{ item.filename }}" class="btn btn-sm btn-primary">
+                                                            <i class="bi bi-search"></i> 詳細を見る
+                                                        </a>
+                                                        <button type="button" class="btn btn-sm btn-danger delete-history-btn" 
+                                                                data-bs-toggle="modal" 
+                                                                data-bs-target="#deleteConfirmModal"
+                                                                data-filename="{{ item.filename }}"
+                                                                data-date="{{ item.date }}">
+                                                            <i class="bi bi-trash"></i> 削除
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         {% endfor %}
@@ -92,5 +106,158 @@
             </div>
         </div>
     </div>
+
+    <!-- 削除確認モーダル -->
+    <div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-labelledby="deleteConfirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="deleteConfirmModalLabel">履歴削除の確認</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="閉じる"></button>
+                </div>
+                <div class="modal-body">
+                    <p>以下の履歴を削除しますか？</p>
+                    <p><strong>日時：</strong> <span id="deleteDate"></span></p>
+                    <p class="text-danger">この操作は取り消せません。</p>
+                    
+                    <form id="deleteForm" action="/history/delete" method="post">
+                        <input type="hidden" id="filenameInput" name="filename" value="">
+                        <input type="hidden" id="expectedCodeInput" name="expected_code" value="">
+                        
+                        <div class="mb-3">
+                            <label for="confirmationCode" class="form-label">確認コード: <span id="confirmationCodeDisplay" class="text-danger fw-bold"></span></label>
+                            <input type="text" class="form-control" id="confirmationCode" name="confirmation_code" placeholder="上記の確認コードを入力してください" required>
+                            <div class="form-text">削除を確認するには、上記の確認コードを正確に入力してください。</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                    <button type="button" class="btn btn-danger" id="submitDeleteForm">削除する</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全履歴削除確認モーダル (PayPal連携) -->
+    <div class="modal fade" id="deleteAllWithPaypalConfirmModal" tabindex="-1" aria-labelledby="deleteAllWithPaypalConfirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="deleteAllWithPaypalConfirmModalLabel">全履歴削除の確認 (PayPal連携)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="閉じる"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>本当に全ての履歴を削除しますか？</strong></p>
+                    <p class="text-danger">この操作には、ローカルに保存されている全ての履歴ファイルと、それらに関連付けられた<strong>PayPal上の注文情報</strong>の削除が含まれます。</p>
+                    <p class="text-danger fw-bold">この操作は取り消すことができず、PayPal側のデータも完全に削除されます。十分ご注意ください。</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteAllWithPaypal">全てのローカル履歴とPayPal注文を削除する</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 削除確認用のJavaScript -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 削除ボタンがクリックされたときの処理
+            const deleteButtons = document.querySelectorAll('.delete-history-btn');
+            deleteButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const filename = this.getAttribute('data-filename');
+                    const date = this.getAttribute('data-date');
+                    
+                    // 確認コードを生成（6桁のランダムな数字）
+                    const confirmationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                    
+                    // モーダルに情報をセット
+                    document.getElementById('deleteDate').textContent = date;
+                    document.getElementById('filenameInput').value = filename;
+                    document.getElementById('expectedCodeInput').value = confirmationCode;
+                    document.getElementById('confirmationCodeDisplay').textContent = confirmationCode;
+                    document.getElementById('confirmationCode').value = '';
+                });
+            });
+            
+            // 削除フォーム送信
+            document.getElementById('submitDeleteForm').addEventListener('click', function() {
+                const form = document.getElementById('deleteForm');
+                const confirmationCode = document.getElementById('confirmationCode').value;
+                const expectedCode = document.getElementById('expectedCodeInput').value;
+                
+                if (confirmationCode === expectedCode) {
+                    form.submit();
+                } else {
+                    alert('確認コードが一致しません。もう一度お試しください。');
+                }
+            });
+        });
+
+            // 全履歴削除 (PayPal連携) の処理
+            const deleteAllWithPaypalBtnGlobal = document.getElementById('deleteAllWithPaypalBtn');
+            if (deleteAllWithPaypalBtnGlobal) { // ボタンが存在する場合のみリスナーを追加
+                const confirmDeleteAllWithPaypalBtn = document.getElementById('confirmDeleteAllWithPaypal');
+                
+                if (confirmDeleteAllWithPaypalBtn) {
+                    confirmDeleteAllWithPaypalBtn.addEventListener('click', function() {
+                        // スピナー表示などのUIフィードバックを追加しても良い
+                        this.disabled = true;
+                        this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+
+                        fetch('/history/delete_all_with_paypal', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                                // CSRFトークンが必要な場合はここに追加 (Flask-WTFなどを使用している場合)
+                                // 'X-CSRFToken': ''
+                            }
+                        })
+                        .then(response => {
+                            if (!response.ok) {
+                                // サーバエラーの場合、レスポンスボディをテキストとして取得試行
+                                return response.text().then(text => { 
+                                    throw new Error(`サーバーエラー: ${response.status} ${response.statusText}. 詳細: ${text}`); 
+                                });
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log('Delete all response:', data);
+                            let message = `削除処理完了:\nローカルファイル削除: ${data.local_files_deleted}\nPayPal注文削除成功: ${data.paypal_orders_deleted}\nPayPal注文削除失敗: ${data.paypal_orders_failed}`;
+                            if (data.paypal_orders_failed > 0 && data.failed_details) {
+                                message += "\n\n失敗したPayPal注文の詳細:";
+                                data.failed_details.forEach(detail => {
+                                    message += `\n- Order ID: ${detail.order_id}, Reason: ${detail.reason}`;
+                                });
+                            }
+                            alert(message);
+                            // モーダルを閉じる
+                            const modalElement = document.getElementById('deleteAllWithPaypalConfirmModal');
+                            if (modalElement) {
+                                const modalInstance = bootstrap.Modal.getInstance(modalElement);
+                                if (modalInstance) {
+                                    modalInstance.hide();
+                                }
+                            }
+                            window.location.reload(); // ページをリロードして履歴を更新
+                        })
+                        .catch(error => {
+                            console.error('Error deleting all history with PayPal:', error);
+                            alert('全履歴の削除中にエラーが発生しました。詳細はコンソールを確認してください。\n' + error.message);
+                        })
+                        .finally(() => {
+                            // ボタンの状態を元に戻す
+                            confirmDeleteAllWithPaypalBtn.disabled = false;
+                            confirmDeleteAllWithPaypalBtn.innerHTML = '全てのローカル履歴とPayPal注文を削除する';
+                        });
+                    });
+                }
+            } else {
+                console.warn("'deleteAllWithPaypalBtn' が見つかりませんでした。")
+            }
+    </script>
 </body>
 </html>
