@@ -59,6 +59,12 @@ def clear_cache():
     logger.info("処理キャッシュをクリアしました")
 
 # 必要なモジュールをインポート
+# カレントディレクトリをPYTHONPATHに追加（デプロイ環境用）
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    logger.info("カレントディレクトリをPYTHONPATHに追加しました")
+
+# ローカルモジュールのインポート
 import customer_extractor
 
 # モジュールの再読み込みを強制する関数
@@ -162,6 +168,7 @@ if not os.path.exists(app.config['SESSION_FILE_DIR']):
         logger.info(f"フォールバックセッションディレクトリ: {app.config['SESSION_FILE_DIR']}")
 
 # paypal_utils.pyからの関数インポート
+# ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
 
 # 管理者認証用デコレータ
@@ -268,6 +275,7 @@ reload_modules()
 
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+# ローカルモジュールのインポート
 from extractors import ExtractionResult
 
 # 設定ファイルのパス
@@ -351,6 +359,7 @@ def save_config(config):
         logger.error(f"設定の保存エラー: {str(e)}")
         return False
 # customer_extractorモジュールからCustomerExtractorクラスではなく関数をインポート
+# ローカルモジュールのインポート
 import amount_extractor
 
 # 追加のPDF処理ライブラリをインポート
@@ -458,6 +467,7 @@ def fix_numeric_encoding(text):
 # extractors.pyの関数をインポート
 # extractorsモジュールのインポートを試みる（オプション）
 try:
+    # ローカルモジュールのインポート
     from extractors import extract_text_from_pdf, extract_amount_only
     from extractors import ExtractionResult
     logger.info("extractorsモジュールを正常に読み込みました。")
@@ -469,6 +479,7 @@ except ImportError:
 
 # AI OCR機能のインポート
 try:
+    # ローカルモジュールのインポート
     from ai_ocr import process_pdf_with_ai_ocr
     AI_OCR_AVAILABLE = True
     logger.info("AI OCRモジュールを読み込みました")
@@ -477,6 +488,7 @@ except ImportError:
     logger.warning("AI OCRモジュールが見つかりません。AI OCR機能は無効です。")
 
 try:
+    # ローカルモジュールのインポート
     from template_matching import TemplateManager, process_pdf_with_template_matching
     TEMPLATE_MATCHING_AVAILABLE = True
     logger.info("テンプレートマッチングモジュールを読み込みました")
@@ -485,8 +497,8 @@ except ImportError:
     logger.warning("テンプレートマッチングモジュールが見つかりません。テンプレート機能は無効です。")
 
 try:
+    # ローカルモジュールのインポート
     from interactive_correction import setup_interactive_correction_routes
-    # インタラクティブ修正モジュールのクラスをインスタンス化して使用する
     from interactive_correction import CorrectionHistory, LearningData
     history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'correction_history')
     data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'learning_data')
@@ -523,6 +535,7 @@ except ImportError as e:
 
 # 設定管理モジュールのインポート
 try:
+    # ローカルモジュールのインポート
     from config_manager import config_manager, get_config, save_config
 except ImportError:
     logger.warning("config_manager.pyモジュールを読み込めません。絶対パスでインポートを試みます。")
