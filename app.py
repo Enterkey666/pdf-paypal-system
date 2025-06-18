@@ -1327,7 +1327,7 @@ def get_api_base():
         logger.error(f"PayPal APIベースURL取得エラー: {str(e)}")
         return "https://api-m.sandbox.paypal.com"  # 安全なデフォルト値
 
-def create_paypal_payment_link(amount, customer):
+def create_paypal_payment_link(amount, customer, request=None):
     """
     PayPal決済リンクを生成する
     
@@ -1403,7 +1403,11 @@ def create_paypal_payment_link(amount, customer):
     while retry_count <= max_retries:
         try:
             # get_paypal_access_token関数を使用してアクセストークンを取得
-            access_token = get_paypal_access_token()
+            try:
+                access_token = get_paypal_access_token()
+            except Exception as token_err:
+                logger.error(f"PayPalアクセストークン取得中に例外が発生: {str(token_err)}")
+                access_token = None
             
             if not access_token:
                 logger.error("PayPalアクセストークンの取得に失敗しました")
@@ -1444,8 +1448,8 @@ def create_paypal_payment_link(amount, customer):
                     }
                 ],
                 "application_context": {
-                    "return_url": request.url_root.rstrip('/') + url_for('payment_success'),
-                    "cancel_url": request.url_root.rstrip('/') + url_for('payment_cancel'),
+                    "return_url": (request.url_root.rstrip('/') if request else '') + url_for('payment_success'),
+                    "cancel_url": (request.url_root.rstrip('/') if request else '') + url_for('payment_cancel'),
                     "brand_name": "PDF PayPal System",
                     "locale": "ja-JP",
                     "landing_page": "BILLING",
@@ -1679,6 +1683,7 @@ def check_payment_status(order_id):
         return "UNKNOWN"
 
 # 選択された金額で決済リンクを生成するAPI
+@app.route('/api/generate_payment_link', methods=['POST'])
 def generate_payment_link():
     """選択された金額で決済リンクを生成するAPI"""
     try:
@@ -1695,376 +1700,111 @@ def generate_payment_link():
         
         logger.info(f"決済リンク生成リクエスト: 顧客名={customer}, 金額={amount}, ファイル名={filename}")
         
-        # 金額が有効かチェック
-        if not amount or amount == '0':
-            logger.error("無効な金額です")
-            return jsonify({'error': '有効な金額を指定してください'}), 400
+        # create_paypal_payment_link関数を使用して決済リンクを生成
+        payment_link = create_paypal_payment_link(amount, customer, request)
         
-        # PayPalの決済リンクを生成
-        payment_link = create_paypal_payment_link(amount, customer)
-        
-        if not payment_link:
+        if payment_link:
+            return jsonify({
+                'success': True,
+                'payment_link': payment_link
+            })
+        else:
             logger.error("決済リンクの生成に失敗しました")
-            return jsonify({'error': '決済リンクの生成に失敗しました'}), 500
-        
-        # 履歴ファイルを更新（存在する場合）
-        try:
-            # 最新の履歴ファイルを探す（filenameに関連する履歴）
-            results_folder = app.config['RESULTS_FOLDER']
-            history_files = [f for f in os.listdir(results_folder) if f.endswith('.json')]
-            history_files.sort(reverse=True)  # 最新のファイルが先頭に来るようにソート
-            
-            updated = False
-            for history_file in history_files:
-                file_path = os.path.join(results_folder, history_file)
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    results = json.load(f)
-                
-                # ファイル名が一致する項目を探して更新
-                for item in results:
-                    if isinstance(item, dict) and item.get('filename') == filename:
-                        item['amount'] = amount
-                        item['payment_link'] = payment_link
-                        item['status'] = 'success'
-                        updated = True
-                        break
-                
-                if updated:
-                    # 更新された結果を保存
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        json.dump(results, f, ensure_ascii=False, indent=2)
-                    logger.info(f"履歴ファイル {history_file} を更新しました")
-                    break
-        except Exception as e:
-            logger.warning(f"履歴ファイルの更新に失敗しました: {str(e)}")
-        
-        return jsonify({
-            'success': True,
-            'payment_link': payment_link,
-            'customer': customer,
-            'amount': amount
-        })
+            return jsonify({
+                'success': False,
+                'error': '決済リンクの生成に失敗しました'
+            }), 500
     except Exception as e:
-        logger.error(f"決済リンク生成エラー: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"PayPal決済リンク生成エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'決済リンク生成中にエラーが発生しました: {str(e)}'
+        }), 500
 
-# 履歴詳細ページ
-@app.route('/history/<filename>')
-def history_detail(filename):
-    """
-    決済履歴詳細ページ
-    管理者権限が必要
-    """
-    results = []
+# 単一PDFファイルの処理
+def process_single_pdf(filepath, filename, request):
     try:
-        results_folder = app.config['RESULTS_FOLDER']
-        file_path = os.path.join(results_folder, filename)
-        if os.path.exists(file_path):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                results = json.load(f)
-                
-            # 各決済リンクの状態を確認
-            for i, item in enumerate(results):
-                # データが辞書型か確認
-                if not isinstance(item, dict):
-                    logger.warning(f"履歴データの項目 {i} は辞書型ではありません: {type(item)}")
-                    continue
-                
-                # 金額データの処理
-                if 'amount' in item:
-                    amount_data = item['amount']
-                    # 金額がオブジェクト形式の場合
-                    if isinstance(amount_data, dict) and 'selected' in amount_data:
-                        # selectedの値を取り出して表示用にフォーマット
-                        selected_amount = amount_data['selected']
-                        # 数値以外の文字を除去して整数値に変換
-                        numeric_amount = ''.join(filter(str.isdigit, str(selected_amount)))
-                        # カンマ区切りを追加
-                        if numeric_amount:
-                            formatted_amount = f"¥{int(numeric_amount):,}"
-                        else:
-                            formatted_amount = "¥0"
-                        item['formatted_amount'] = formatted_amount
+        logger.info(f"単一PDF処理開始: {filepath}")
+        
+        # PDFからテキストを抽出
+        text_result = extract_text_from_pdf(filepath)
+        extracted_text = text_result.get('text', '')
+        extraction_method = text_result.get('method', 'unknown')
+        
+        if not extracted_text:
+            logger.warning(f"テキスト抽出失敗: {filepath}")
+            return {
+                'filename': filename,
+                'success': False,
+                'error': 'テキストを抽出できませんでした'
+            }
+        
+        # テキストの一部をログに記録
+        text_preview = extracted_text[:200] + '...' if len(extracted_text) > 200 else extracted_text
+        logger.info(f"抽出されたテキストプレビュー: {text_preview}")
+        
+        # 顧客名を抽出
+        customer_name = customer_extractor.extract_customer(extracted_text, filename)
+        
+        # 金額を抽出
+        amount_result = amount_extractor.extract_invoice_amount(extracted_text)
+        # タプルから直接値を取得 (金額, 抽出元の行)
+        amount = amount_result[0] if amount_result and amount_result[0] is not None else "0"
+        # 抽出元の行（デバッグ用）
+        amount_source_line = amount_result[1] if amount_result and len(amount_result) > 1 else ""
+        logger.debug(f"抽出された金額: {amount}, 抽出元: {amount_source_line}")
+        
+        # 金額のフォーマットを整える
+        amount_str = str(amount).replace(',', '').strip()
+        
+        # PayPal決済リンクを生成
+        payment_link = None
+        order_id = None
+        try:
+            if amount_str and amount_str != '0':
+                logger.info(f"PayPal決済リンク生成開始: 金額={amount_str}, 顧客={customer_name}")
+                try:
+                    # 設定情報を確認
+                    config = get_config()
+                    client_id = config.get('paypal_client_id', '')
+                    client_secret = config.get('paypal_client_secret', '')
+                    if not client_id or not client_secret:
+                        logger.warning("PayPal認証情報が設定されていません")
+                        raise ValueError("PayPal認証情報が設定されていません")
+                        
+                    payment_link = create_paypal_payment_link(amount_str, customer_name, request)
+                    if payment_link:
+                        logger.info(f"決済リンク生成成功: {payment_link}")
                     else:
-                        # 単純な文字列または数値の場合
-                        numeric_amount = ''.join(filter(str.isdigit, str(amount_data)))
-                        if numeric_amount:
-                            item['formatted_amount'] = f"¥{int(numeric_amount):,}"
-                        else:
-                            item['formatted_amount'] = "¥0"
-                else:
-                    item['formatted_amount'] = "¥0"
-                
-                # 顧客名の処理
-                customer_value = None
-                # customer_nameキーを優先的に確認
-                if 'customer_name' in item and item['customer_name']:
-                    customer_value = item['customer_name']
-                # 次にcustomerキーを確認
-                elif 'customer' in item and item['customer']:
-                    customer_value = item['customer']
-                
-                if customer_value:
-                    # 顧客名から余分な空白や改行を除去
-                    item['formatted_customer'] = customer_value.replace('\n', ' ').strip()
-                    # 「様」を付けないように修正
-                    # 以前は「様」を追加していたが、ユーザーの要望により削除
-                else:
-                    item['formatted_customer'] = '不明'
-                    
-                payment_link = item.get('payment_link') or item.get('決済リンク', '')
-                # PayPalのURLからオーダーIDを抽出
-                order_id = None
-                if payment_link and 'token=' in payment_link:
-                    order_id = payment_link.split('token=')[-1].split('&')[0]
-                
-                # 決済状態を確認して追加
-                if order_id:
-                    status = check_payment_status(order_id)
-                    item['payment_status'] = status
-                else:
-                    item['payment_status'] = "UNKNOWN"
-                    
-    except Exception as e:
-        logger.error(f"履歴詳細読み込みエラー: {str(e)}")
-    return render_template('history_detail.html', filename=filename, results=results)
-
-# 環境変数からポート番号を取得（クラウド環境対応）
-def get_port():
-    """コマンドライン引数または環境変数からポート番号を取得する"""
-    # コマンドライン引数からポート番号を取得
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, help='ポート番号')
-    args, unknown = parser.parse_known_args()
-    
-    if args.port:
-        logger.info(f"コマンドライン引数からポート番号を取得: {args.port}")
-        return args.port
-    
-    # 環境変数からポート番号を取得
-    port = os.environ.get('PORT')
-    if port:
-        try:
-            return int(port)
-        except ValueError:
-            logger.warning(f"無効なポート番号: {port}")
-    
-    # デフォルトポート
-    return 5000
-
-# 設定ファイルが存在しない場合に初期設定を作成
-def initialize_config():
-    config = get_config()
-    if not config:
-        config = {
-            'paypal_client_id': os.environ.get("PAYPAL_CLIENT_ID", ""),
-            'paypal_client_secret': os.environ.get("PAYPAL_CLIENT_SECRET", ""),
-            'paypal_mode': os.environ.get("PAYPAL_MODE", "sandbox"),
-            'use_ai_ocr': config.get('use_ai_ocr', False)
-        }
-        save_config(config)
-    return config
-
-
-# トップページ
-@app.route('/')
-def index():
-    """アプリケーションのトップページ
-    
-    PDFファイルのアップロードと処理を行うメインページ
-    """
-    logger.info("トップページにアクセスされました")
-    
-    # セッション情報をログ出力
-    logger.info(f"トップページ表示時のセッション状態: {session}")
-    logger.info(f"トップページ表示時のセッションID: {session.sid if hasattr(session, 'sid') else 'なし'}")
-    logger.info(f"トップページ表示時のCookie: {request.cookies}")
-    
-    # 現在のPayPalモードを取得
-    config = get_config()
-    paypal_mode = config.get('paypal_mode', 'sandbox')
-    
-    # ユーザー権限情報
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
-    
-    # 権限情報をログ出力
-    logger.info(f"トップページ表示時の権限情報 - is_admin: {is_admin}, is_paid_member: {is_paid_member}")
-    
-    # セッションが正しく保存されているか確認
-    if 'admin_logged_in' in session:
-        logger.info("管理者ログイン情報がセッションに存在します")
-    else:
-        logger.warning("管理者ログイン情報がセッションに存在しません")
-    
-    # 本番モードで有料会員でない場合は制限表示フラグをオン
-    show_restrictions = paypal_mode.lower() == 'live' and not (is_admin or is_paid_member)
-    
-    # レンダリング前の最終確認
-    logger.info(f"トップページレンダリング前の最終確認 - is_admin: {is_admin}, paypal_mode: {paypal_mode}")
-    
-    return render_template(
-        'index.html',
-        paypal_mode=paypal_mode,
-        is_admin=is_admin,
-        is_paid_member=is_paid_member,
-        show_restrictions=show_restrictions
-    )
-
-# 有料会員情報ページ
-@app.route('/membership_info')
-def membership_info():
-    """有料会員情報を表示するページ
-    
-    有料会員の特典や登録方法などの情報を表示する
-    """
-    logger.info("有料会員情報ページにアクセスされました")
-    
-    # 現在のPayPalモードを取得
-    config = get_config()
-    paypal_mode = config.get('paypal_mode', 'sandbox')
-    
-    # ユーザー権限情報
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
-    
-    return render_template(
-        'membership_info.html',
-        paypal_mode=paypal_mode,
-        is_admin=is_admin,
-        is_paid_member=is_paid_member
-    )
-
-# 管理者連絡ページ
-@app.route('/contact_admin')
-def contact_admin():
-    """管理者への連絡ページ
-    
-    有料会員登録や問い合わせのための管理者連絡フォームを表示する
-    """
-    logger.info("管理者連絡ページにアクセスされました")
-    
-    # 現在のPayPalモードを取得
-    config = get_config()
-    paypal_mode = config.get('paypal_mode', 'sandbox')
-    
-    # ユーザー権限情報
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
-    
-    # 管理者のメールアドレス（環境変数から取得）
-    admin_email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
-    
-    return render_template(
-        'contact_admin.html',
-        paypal_mode=paypal_mode,
-        is_admin=is_admin,
-        is_paid_member=is_paid_member,
-        admin_email=admin_email
-    )
-
-# PayPal決済成功ページ
-@app.route('/payment_success')
-def payment_success():
-    """決済成功時のリダイレクト先ページ
-    
-    PayPal決済が成功した場合に表示されるページ
-    """
-    # リクエストパラメータを取得
-    order_id = request.args.get('token')
-    payer_id = request.args.get('PayerID')
-    
-    logger.info(f"PayPal決済成功ページにアクセスされました - token: {order_id}, PayerID: {payer_id}")
-    
-    # 決済状態を確認
-    status = "UNKNOWN"
-    if order_id:
-        status = check_payment_status(order_id)
-        logger.info(f"PayPal決済状態: {status}")
-    
-    # 現在時刻を取得
-    current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
-    
-    return render_template(
-        'payment_result.html',
-        status=status,
-        order_id=order_id,
-        result="success",
-        current_time=current_time
-    )
-
-# PayPal決済キャンセルページ
-@app.route('/payment_cancel')
-def payment_cancel():
-    """決済キャンセル時のリダイレクト先ページ
-    
-    PayPal決済がキャンセルされた場合に表示されるページ
-    """
-    logger.info("PayPal決済キャンセルページにアクセスされました")
-    
-    # オーダーIDを取得
-    order_id = request.args.get('token')
-    
-    # 現在時刻を取得
-    current_time = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
-    
-    return render_template(
-        'payment_result.html',
-        status="CANCELED",
-        order_id=order_id,
-        result="cancel",
-        current_time=current_time
-    )
-
-# PDFファイルのアップロード処理
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    """ファイルアップロードのAPIエンドポイント
-    
-    クライアントから送信されたPDFファイルを受け取り、一時ディレクトリに保存する
-    """
-    logger.info("ファイルアップロードリクエストを受信")
-    
-    # リクエストのデバッグ情報を記録
-    logger.debug(f"Request files: {request.files}")
-    logger.debug(f"Request form: {request.form}")
-    
-    # ファイルが送信されているか確認
-    if 'file' not in request.files:
-        logger.warning("ファイルが送信されていません")
-        return jsonify({'error': 'ファイルが送信されていません'}), 400
-    
-    file = request.files['file']
-    
-    # ファイル名が空でないか確認
-    if file.filename == '':
-        logger.warning("ファイル名が空です")
-        return jsonify({'error': 'ファイルが選択されていません'}), 400
-    
-    # ファイル拡張子が有効か確認
-    if not file.filename.lower().endswith('.pdf'):
-        logger.warning(f"無効なファイル形式: {file.filename}")
-        return jsonify({'error': 'PDFファイルのみアップロード可能です'}), 400
-    
-    try:
-        # ファイルを保存
-        filename = secure_filename(file.filename)
-        upload_folder = current_app.config['UPLOAD_FOLDER']
-        filepath = os.path.join(upload_folder, filename)
-        file.save(filepath)
+                        logger.warning("決済リンクが空で返されました")
+                except Exception as link_err:
+                    logger.error(f"決済リンク生成中の例外: {str(link_err)}")
+                    # エラーの詳細情報をログに記録
+                    import traceback
+                    logger.error(f"スタックトレース: {traceback.format_exc()}")
+                    raise
+        except Exception as e:
+            logger.error(f"決済リンク生成エラー: {str(e)}")
+            # エラーを記録するが処理は続行
         
-        logger.info(f"ファイルを保存しました: {filepath}")
-        
-        return jsonify({
-            'success': True,
+        # 結果を返す
+        return {
             'filename': filename,
-            'message': 'ファイルがアップロードされました'
-        })
+            'customer_name': customer_name,
+            'amount': amount_str,
+            'payment_link': payment_link,
+            'order_id': order_id,
+            'extraction_method': extraction_method,
+            'success': True
+        }
         
     except Exception as e:
-        logger.error(f"ファイルアップロードエラー: {str(e)}")
-        return jsonify({'error': f'ファイルの保存中にエラーが発生しました: {str(e)}'}), 500
+        logger.error(f"PDF処理エラー ({filename}): {str(e)}")
+        return {
+            'filename': filename,
+            'success': False,
+            'error': str(e)
+        }
 
 # PDFファイルの処理
 @app.route('/process', methods=['POST'])
@@ -2128,7 +1868,7 @@ def process_pdf():
                 
                 # 単一ページの場合はそのまま処理
                 if num_pages == 1:
-                    result = process_single_pdf(filepath, filename)
+                    result = process_single_pdf(filepath, filename, request)
                     if result:
                         results.append(result)
                 else:
@@ -2148,7 +1888,7 @@ def process_pdf():
                                 output_pdf.write(output_file)
                             
                             # 各ページを処理
-                            page_result = process_single_pdf(page_filepath, f"{filename}_page{page_num + 1}")
+                            page_result = process_single_pdf(page_filepath, f"{filename}_page{page_num + 1}", request)
                             if page_result:
                                 results.append(page_result)
                                 
@@ -2201,194 +1941,19 @@ def process_pdf():
         return jsonify(response_data)
         
     except Exception as e:
+        import traceback
         logger.error(f"PDF処理エラー: {str(e)}")
-        return jsonify({'error': f'PDF処理中にエラーが発生しました: {str(e)}'}), 500
-
-# PDFからテキストを抽出する関数
-def extract_text_from_pdf(pdf_path):
-    """複数の方法でPDFからテキストを抽出する
-    
-    以下の方法を順番に試し、最初に成功した方法の結果を返す:
-    1. pdfplumber
-    2. PyPDF2
-    3. pdf2image + pytesseract (OCR)
-    4. pdfminer.six
-    5. pdftotextコマンド
-    
-    Args:
-        pdf_path: PDFファイルのパス
+        logger.error(f"スタックトレース: {traceback.format_exc()}")
         
-    Returns:
-        抽出されたテキストと使用された方法を含む辞書
-    """
-    logger.info(f"PDFからテキストを抽出開始: {pdf_path}")
-    
-    # 方法１: pdfplumberを使用
-    try:
-        logger.info("方法１: pdfplumberを使用")
-        import pdfplumber
+        # ファイル名が定義されている場合のみ使用
+        error_filename = filename if 'filename' in locals() else 'unknown'
+        logger.error(f"PDF処理エラー ({error_filename}): {str(e)}")
         
-        with pdfplumber.open(pdf_path) as pdf:
-            text = ""
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n\n"
-            
-            if text.strip():
-                logger.info("pdfplumberでテキスト抽出成功")
-                return {'text': text, 'method': 'pdfplumber'}
-    except Exception as e:
-        logger.warning(f"pdfplumberでの抽出失敗: {str(e)}")
-    
-    # 方法２: PyPDF2を使用
-    try:
-        logger.info("方法２: PyPDF2を使用")
-        import PyPDF2
-        
-        with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page in reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n\n"
-            
-            if text.strip():
-                logger.info("PyPDF2でテキスト抽出成功")
-                return {'text': text, 'method': 'PyPDF2'}
-    except Exception as e:
-        logger.warning(f"PyPDF2での抽出失敗: {str(e)}")
-    
-    # 方法３: pdf2image + pytesseract (OCR)
-    try:
-        logger.info("方法３: pdf2image + pytesseract (OCR)を使用")
-        import pdf2image
-        import pytesseract
-        from PIL import Image
-        
-        images = pdf2image.convert_from_path(pdf_path)
-        text = ""
-        for i, image in enumerate(images):
-            page_text = pytesseract.image_to_string(image, lang='jpn+eng')
-            if page_text:
-                text += page_text + "\n\n"
-        
-        if text.strip():
-            logger.info("OCRでテキスト抽出成功")
-            return {'text': text, 'method': 'OCR'}
-    except Exception as e:
-        logger.warning(f"OCRでの抽出失敗: {str(e)}")
-    
-    # 方法４: pdfminer.sixを使用
-    try:
-        logger.info("方法４: pdfminer.sixを使用")
-        from pdfminer.high_level import extract_text as pdfminer_extract_text
-        
-        text = pdfminer_extract_text(pdf_path)
-        if text.strip():
-            logger.info("pdfminer.sixでテキスト抽出成功")
-            return {'text': text, 'method': 'pdfminer'}
-    except Exception as e:
-        logger.warning(f"pdfminer.sixでの抽出失敗: {str(e)}")
-    
-    # 方法５: pdftotextコマンドを使用
-    try:
-        logger.info("方法５: pdftotextコマンドを使用")
-        import subprocess
-        import tempfile
-        
-        with tempfile.NamedTemporaryFile(suffix='.txt') as temp_file:
-            subprocess.run(['pdftotext', pdf_path, temp_file.name], check=True)
-            with open(temp_file.name, 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read()
-        
-        if text.strip():
-            logger.info("pdftotextコマンドでテキスト抽出成功")
-            return {'text': text, 'method': 'pdftotext'}
-    except Exception as e:
-        logger.warning(f"pdftotextコマンドでの抽出失敗: {str(e)}")
-    
-    # すべての方法が失敗した場合
-    logger.error(f"すべての方法でテキスト抽出に失敗しました: {pdf_path}")
-    return {'text': '', 'method': 'failed'}
-
-# 単一PDFファイルの処理
-def process_single_pdf(filepath, filename):
-    """単一のPDFファイルを処理する関数
-    
-    PDFからテキストを抽出し、顧客名と金額を特定してPayPal決済リンクを生成する
-    
-    Args:
-        filepath: PDFファイルのパス
-        filename: ファイル名
-        
-    Returns:
-        処理結果を含む辞書
-    """
-    try:
-        logger.info(f"単一PDF処理開始: {filepath}")
-        
-        # PDFからテキストを抽出
-        text_result = extract_text_from_pdf(filepath)
-        extracted_text = text_result.get('text', '')
-        extraction_method = text_result.get('method', 'unknown')
-        
-        if not extracted_text:
-            logger.warning(f"テキスト抽出失敗: {filepath}")
-            return {
-                'filename': filename,
-                'success': False,
-                'error': 'テキストを抽出できませんでした'
-            }
-        
-        # テキストの一部をログに記録
-        text_preview = extracted_text[:200] + '...' if len(extracted_text) > 200 else extracted_text
-        logger.info(f"抽出されたテキストプレビュー: {text_preview}")
-        
-        # 顧客名を抽出
-        customer_name = customer_extractor.extract_customer(extracted_text, filename)
-        
-        # 金額を抽出
-        amount_result = amount_extractor.extract_invoice_amount(extracted_text)
-        # タプルから直接値を取得 (金額, 抽出元の行)
-        amount = amount_result[0] if amount_result and amount_result[0] is not None else "0"
-        # 抽出元の行（デバッグ用）
-        amount_source_line = amount_result[1] if amount_result and len(amount_result) > 1 else ""
-        logger.debug(f"抽出された金額: {amount}, 抽出元: {amount_source_line}")
-        
-        # 金額のフォーマットを整える
-        amount_str = str(amount).replace(',', '').strip()
-        
-        # PayPal決済リンクを生成
-        # generate_payment_linkの代わりにcreate_paypal_payment_linkを直接呼び出す
-        payment_link = None
-        order_id = None
-        try:
-            if amount_str and amount_str != '0':
-                payment_link = create_paypal_payment_link(amount_str, customer_name)
-                logger.info(f"決済リンク生成成功: {payment_link}")
-        except Exception as e:
-            logger.error(f"決済リンク生成エラー: {str(e)}")
-        
-        # 結果を返す
-        return {
-            'filename': filename,
-            'customer_name': customer_name,
-            'amount': amount_str,
-            'payment_link': payment_link,
-            'order_id': order_id,
-            'extraction_method': extraction_method,
-            'success': True
-        }
-        
-    except Exception as e:
-        logger.error(f"PDF処理エラー ({filename}): {str(e)}")
-        return {
-            'filename': filename,
+        # JSONレスポンスを返す
+        return jsonify({
             'success': False,
-            'error': str(e)
-        }
+            'error': f'PDF処理中にエラーが発生しました: {str(e)}'
+        }), 500
 
 
 
@@ -2682,6 +2247,43 @@ if __name__ == '__main__':
     logger.info("=== 環境変数 ===")
     for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR']:
         logger.info(f"{key}: {os.environ.get(key, 'Not set')}")
+    
+    # 設定の初期化
+    def initialize_config():
+        """
+        アプリケーションの設定を初期化する
+        デフォルト設定の作成と環境変数の読み込みを行う
+        """
+        try:
+            # 現在の設定を取得
+            config = get_config()
+            
+            # 環境変数から設定を読み込む
+            if 'PAYPAL_CLIENT_ID' in os.environ:
+                config['client_id'] = os.environ['PAYPAL_CLIENT_ID']
+            if 'PAYPAL_CLIENT_SECRET' in os.environ:
+                config['client_secret'] = os.environ['PAYPAL_CLIENT_SECRET']
+            if 'PAYPAL_MODE' in os.environ:
+                config['paypal_mode'] = os.environ['PAYPAL_MODE']
+            if 'ADMIN_EMAIL' in os.environ:
+                config['admin_email'] = os.environ['ADMIN_EMAIL']
+                
+            # 設定を保存
+            save_config(config)
+            logger.info("設定を初期化しました")
+        except Exception as e:
+            logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
+
+    # 設定の初期化
+    initialize_config()
+
+    # アプリケーション作成
+    def create_app():
+        port = get_port()
+        
+        # Renderなどのクラウド環境では、debug=Falseを使用
+        debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+        logger.info(f"アプリ起動: host=0.0.0.0, port={port}, debug={debug_mode}")
     
     # アプリ初期化
     create_app()
