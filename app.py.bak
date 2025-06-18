@@ -1,0 +1,2424 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""PDF PayPal System
+
+PDFファイルから顧客情報と金額を抽出し、PayPal決済リンクを生成するシステム
+"""
+
+import os
+import re
+import sys
+import json
+import time
+import uuid
+import math
+import base64
+import shutil
+import logging
+import tempfile
+import traceback
+import subprocess
+from datetime import datetime, timedelta
+from urllib.parse import quote, unquote
+from pathlib import Path
+from flask import Flask, request, render_template, jsonify, send_from_directory, redirect, url_for, flash
+from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# 追加のPDF処理ライブラリをインポート
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract_text
+    PDFMINER_AVAILABLE = True
+except ImportError:
+    PDFMINER_AVAILABLE = False
+
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+
+# ロガー設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app.log')),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# テキスト処理のヘルパー関数
+def get_line_containing(text, keyword):
+    """テキスト内でキーワードを含む行を取得する"""
+    if not text or not keyword:
+        return ""
+    lines = text.split('\n')
+    for line in lines:
+        if keyword in line:
+            return line
+    return ""
+
+# extractors.pyの関数をインポート
+# extractorsモジュールのインポートを試みる（オプション）
+try:
+    from extractors import extract_text_from_pdf, extract_amount_only, extract_customer
+    from extractors import ExtractionResult
+    logger.info("extractorsモジュールを正常に読み込みました。")
+    ENHANCED_OCR_AVAILABLE = True
+    logger.info("拡張OCRモジュールを読み込みました")
+except ImportError:
+    ENHANCED_OCR_AVAILABLE = False
+    logger.warning("拡張OCRモジュールが見つかりません。基本的なOCR機能のみ使用します。")
+
+# AI OCR機能のインポート
+try:
+    from ai_ocr import process_pdf_with_ai_ocr
+    AI_OCR_AVAILABLE = True
+    logger.info("AI OCRモジュールを読み込みました")
+except ImportError:
+    AI_OCR_AVAILABLE = False
+    logger.warning("AI OCRモジュールが見つかりません。AI OCR機能は無効です。")
+
+try:
+    from template_matching import TemplateManager, process_pdf_with_template_matching
+    TEMPLATE_MATCHING_AVAILABLE = True
+    logger.info("テンプレートマッチングモジュールを読み込みました")
+except ImportError:
+    TEMPLATE_MATCHING_AVAILABLE = False
+    logger.warning("テンプレートマッチングモジュールが見つかりません。テンプレート機能は無効です。")
+
+try:
+    from interactive_correction import setup_interactive_correction_routes
+    # インタラクティブ修正モジュールのクラスをインスタンス化して使用する
+    from interactive_correction import CorrectionHistory, LearningData
+    history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'correction_history')
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'learning_data')
+    os.makedirs(history_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    correction_history = CorrectionHistory(history_dir)
+    learning_data = LearningData(data_dir)
+    
+    # クラスメソッドをグローバル関数として使えるようにする
+    def get_correction_suggestions(customer, amount):
+        return learning_data.get_correction_suggestions("customer", customer) + \
+               learning_data.get_correction_suggestions("amount", amount)
+    
+    def save_correction(original_customer, original_amount, corrected_customer, corrected_amount, extraction_method=""):
+        # 修正履歴に追加
+        correction_history.add_correction(
+            original_customer, original_amount,
+            corrected_customer, corrected_amount,
+            extraction_method
+        )
+        # 学習データに追加
+        learning_data.add_correction(
+            "customer", original_customer, corrected_customer
+        )
+        learning_data.add_correction(
+            "amount", original_amount, corrected_amount
+        )
+    
+    INTERACTIVE_CORRECTION_AVAILABLE = True
+    logger.info("インタラクティブ修正モジュールを読み込みました")
+except ImportError as e:
+    logger.warning(f"インタラクティブ修正モジュールを読み込めません: {str(e)}")
+    INTERACTIVE_CORRECTION_AVAILABLE = False
+
+# 設定管理モジュールのインポート
+try:
+    from config_manager import config_manager, get_config, save_config
+except ImportError:
+    logger.warning("config_manager.pyモジュールを読み込めません。絶対パスでインポートを試みます。")
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from config_manager import config_manager, get_config, save_config
+
+# 設定の読み込み
+config = get_config()
+
+# 環境変数の読み込み (後方互換性用)
+load_dotenv()
+PAYPAL_CLIENT_ID = config.get('paypal_client_id') or os.getenv("PAYPAL_CLIENT_ID", "")
+PAYPAL_CLIENT_SECRET = config.get('paypal_client_secret') or os.getenv("PAYPAL_CLIENT_SECRET", "")
+PAYPAL_MODE = config.get('paypal_mode') or os.getenv("PAYPAL_MODE", "sandbox")
+
+# 設定を環境変数より優先するように更新
+if not config.get('paypal_client_id') and PAYPAL_CLIENT_ID:
+    config['paypal_client_id'] = PAYPAL_CLIENT_ID
+    save_config(config)
+if not config.get('paypal_client_secret') and PAYPAL_CLIENT_SECRET:
+    config['paypal_client_secret'] = PAYPAL_CLIENT_SECRET
+    save_config(config)
+if not config.get('paypal_mode') and PAYPAL_MODE:
+    config['paypal_mode'] = PAYPAL_MODE
+    save_config(config)
+
+# PayPal APIのベースURLは各関数で最新の設定から取得するように変更
+# これにより、設定変更時に全ての機能が正しく動作する
+# API_BASE = "https://api-m.sandbox.paypal.com" if config.get('paypal_mode') == "sandbox" else "https://api-m.paypal.com"
+
+def create_app():
+    app = Flask(__name__)
+    app.secret_key = os.urandom(24)  # セッション用シークレットキー
+    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大アップロードサイズを50MBに制限
+
+    # アップロードとダウンロードの設定
+    # Renderのような環境では一時ディレクトリを使用
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    upload_folder = os.environ.get('UPLOAD_FOLDER', os.path.join(base_dir, 'uploads'))
+    results_folder = os.environ.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+    allowed_extensions = {'pdf'}
+    
+    # クラウド環境では一時ディレクトリを使用する場合がある
+    if os.environ.get('USE_TEMP_DIR', 'false').lower() == 'true':
+        upload_folder = tempfile.gettempdir()
+        results_folder = tempfile.gettempdir()
+        logger.info(f"一時ディレクトリを使用: {upload_folder}")
+    
+    # フォルダが存在しない場合は作成
+    for folder in [upload_folder, results_folder]:
+        try:
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+            # 書き込み権限をテスト
+            test_file = os.path.join(folder, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logger.info(f"フォルダの書き込み権限確認: {folder}")
+        except Exception as e:
+            logger.error(f"フォルダ作成または権限テストエラー: {folder}, {str(e)}")
+            # 一時ディレクトリにフォールバック
+            if folder == upload_folder:
+                upload_folder = tempfile.gettempdir()
+                logger.info(f"アップロードフォルダを一時ディレクトリに変更: {upload_folder}")
+            elif folder == results_folder:
+                results_folder = tempfile.gettempdir()
+                logger.info(f"結果フォルダを一時ディレクトリに変更: {results_folder}")
+
+    app.config['UPLOAD_FOLDER'] = upload_folder
+    app.config['RESULTS_FOLDER'] = results_folder
+    app.config['ALLOWED_EXTENSIONS'] = allowed_extensions
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
+
+    # 設定の初期化
+    initialize_config()
+    logger.info("アプリケーションを初期化しました")
+
+    # ここに全てのルート関数、ヘルパー関数を登録
+    # ...（既存のルートをすべてapp.routeで登録）...
+
+    # 既存の関数・ルートをappスコープに登録するためにglobals()を使う
+    global allowed_file, extract_text_from_pdf, get_paypal_access_token, create_paypal_payment_link
+    global index, payment_success, payment_cancel, upload_file, process_pdf, download_file
+    global settings, save_settings, test_connection, export_settings, import_settings
+    app.add_url_rule('/', 'index', index)
+    app.add_url_rule('/payment_success', 'payment_success', payment_success)
+    app.add_url_rule('/payment_cancel', 'payment_cancel', payment_cancel)
+    app.add_url_rule('/upload', 'upload_file', upload_file, methods=['POST'])
+    app.add_url_rule('/process_pdf', 'process_pdf', process_pdf, methods=['POST'])
+    app.add_url_rule('/download/<filename>', 'download_file', download_file)
+    app.add_url_rule('/settings', 'settings', settings, methods=['GET'])
+    app.add_url_rule('/settings/save', 'save_settings', save_settings, methods=['POST'])
+    app.add_url_rule('/settings/test_connection', 'test_connection', test_connection, methods=['POST'])
+    app.add_url_rule('/export_settings', 'export_settings', export_settings)
+    app.add_url_rule('/import_settings', 'import_settings', import_settings, methods=['POST'])
+    app.add_url_rule('/history', 'history', history)
+    app.add_url_rule('/history/<filename>', 'history_detail', history_detail)
+    app.add_url_rule('/history/delete', 'delete_history', delete_history, methods=['POST'])
+
+    # インタラクティブ修正機能のルートを設定
+    if INTERACTIVE_CORRECTION_AVAILABLE:
+        try:
+            # 独自のルートを追加
+            app.add_url_rule('/correction', 'correction', correction)
+            app.add_url_rule('/api/save_correction', 'api_save_correction', api_save_correction, methods=['POST'])
+            app.add_url_rule('/api/get_suggestions', 'api_get_suggestions', api_get_suggestions, methods=['GET'])
+            
+            # ディレクトリ作成
+            history_dir = os.path.join(os.path.dirname(__file__), 'data', 'correction_history')
+            data_dir = os.path.join(os.path.dirname(__file__), 'data', 'learning_data')
+            os.makedirs(history_dir, exist_ok=True)
+            os.makedirs(data_dir, exist_ok=True)
+            
+            logger.info("インタラクティブ修正機能のルートを設定しました")
+        except Exception as e:
+            logger.error(f"インタラクティブ修正機能のルート設定エラー: {str(e)}")
+
+    return app
+
+from flask import current_app
+
+# インデックスページ（トップページ）
+def index():
+    """
+    アプリケーションのトップページを表示する
+    """
+    return render_template('index.html')
+
+# インタラクティブ修正機能のルート
+def correction():
+    """
+    修正ページを表示する
+    """
+    if not INTERACTIVE_CORRECTION_AVAILABLE:
+        return "Interactive correction is not available", 404
+        
+    data_str = request.args.get('data', '')
+    if not data_str:
+        return render_template('error.html', message='データが指定されていません')
+        
+    try:
+        data = json.loads(urllib.parse.unquote(data_str))
+        # 修正候補を取得
+        suggestions = get_correction_suggestions(data['customer'], data['amount'])
+        return render_template('correction.html', 
+                              data=data, 
+                              suggestions=suggestions)
+    except Exception as e:
+        logger.error(f"修正画面表示エラー: {str(e)}")
+        return render_template('error.html', message=f'データ処理エラー: {str(e)}')
+
+def api_save_correction():
+    """修正データを保存するAPI"""
+    if not INTERACTIVE_CORRECTION_AVAILABLE:
+        return jsonify({'success': False, 'error': 'インタラクティブ修正機能は利用できません'})
+    
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'error': 'データが指定されていません'})
+        
+        # 必須フィールドの確認
+        required_fields = ['original_customer', 'original_amount', 'corrected_customer', 'corrected_amount']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'success': False, 'error': f'必須フィールド {field} がありません'})
+        
+        # 修正データを保存
+        save_correction(
+            data['original_customer'], 
+            data['original_amount'],
+            data['corrected_customer'], 
+            data['corrected_amount'],
+            data.get('extraction_method', '不明')
+        )
+        
+        # 修正後の金額で新しいPayPalリンクを生成
+        payment_link = create_paypal_payment_link(data['corrected_amount'], data['corrected_customer'])
+        
+        return jsonify({
+            'success': True, 
+            'message': '修正が保存されました',
+            'payment_link': payment_link
+        })
+    except Exception as e:
+        logger.error(f"修正保存エラー: {str(e)}")
+        return jsonify({'success': False, 'error': f'保存エラー: {str(e)}'})
+
+def api_get_suggestions():
+    """修正候補を取得するAPI"""
+    if not INTERACTIVE_CORRECTION_AVAILABLE:
+        return jsonify({'success': False, 'error': 'インタラクティブ修正機能は利用できません'})
+    
+    try:
+        customer = request.args.get('customer', '')
+        amount = request.args.get('amount', '')
+        
+        suggestions = get_correction_suggestions(customer, amount)
+        return jsonify({'success': True, 'suggestions': suggestions})
+    except Exception as e:
+        logger.error(f"候補取得エラー: {str(e)}")
+        return jsonify({'success': False, 'error': f'候補取得エラー: {str(e)}'})
+
+# ファイルアップロード処理
+def upload_file():
+    """ファイルをアップロードして処理する"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'ファイルがアップロードされていません'}), 400, {'Content-Type': 'application/json'}
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'ファイルが選択されていません'}), 400, {'Content-Type': 'application/json'}
+    
+    # 手動入力された金額を取得
+    manual_amount = request.form.get('manual_amount', '')
+    
+    # インタラクティブ修正モードを確認
+    interactive = request.form.get('interactive', '0') == '1'
+    
+    if file and allowed_file(file.filename, current_app.config['ALLOWED_EXTENSIONS']):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        # PDFファイルを処理
+        results = []
+        
+        # PDFのページ数を確認
+        try:
+            with open(filepath, 'rb') as f:
+                pdf = PyPDF2.PdfReader(f)
+                num_pages = len(pdf.pages)
+                
+                if num_pages > 1:
+                    # 複数ページの場合は分割して処理
+                    split_results = split_pdf(filepath, filename, manual_amount, interactive)
+                    results.extend(split_results)
+                else:
+                    # 単一ページの場合は直接処理
+                    single_results = process_pdf(filepath, filename, manual_amount, interactive)
+                    results.extend(single_results)
+        except Exception as e:
+            logger.error(f"PDF処理エラー: {str(e)}")
+            results.append({
+                'error': f"処理エラー: {str(e)}",
+                'filename': filename
+            })
+        
+        # 結果をJSONファイルに保存
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_filename = f"payment_links_{timestamp}.json"
+        result_path = os.path.join(current_app.config['RESULTS_FOLDER'], result_filename)
+        
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        
+        # 明示的にContent-Typeヘッダーを設定
+        response = jsonify({
+            'results': results,
+            'result_file': result_filename
+        })
+        response.headers['Content-Type'] = 'application/json'
+        logger.info(f"アップロード処理完了: {filename}, 結果数: {len(results)}")
+        return response
+    
+    return jsonify({'error': '許可されていないファイル形式です'}), 400, {'Content-Type': 'application/json'}
+
+# ファイル拡張子のチェック
+def allowed_file(filename, allowed_extensions):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+# PDF処理関数
+def split_pdf(filepath, filename, manual_amount='', interactive=False):
+    """複数ページのPDFを分割して処理する関数"""
+    results = []
+    temp_dir = None
+    
+    try:
+        # 一時ディレクトリを作成
+        temp_dir = tempfile.mkdtemp()
+        
+        # PDFを分割
+        with open(filepath, 'rb') as f:
+            pdf = PyPDF2.PdfReader(f)
+            num_pages = len(pdf.pages)
+            
+            for i in range(num_pages):
+                pdf_writer = PyPDF2.PdfWriter()
+                pdf_writer.add_page(pdf.pages[i])
+                
+                output_filename = f"page_{i+1}.pdf"
+                output_path = os.path.join(temp_dir, output_filename)
+                
+                with open(output_path, 'wb') as output_pdf:
+                    pdf_writer.write(output_pdf)
+                
+                # 各ページを処理
+                page_results = process_pdf(output_path, f"{filename}_page{i+1}", manual_amount, interactive)
+                
+                # ページ番号を追加
+                for result in page_results:
+                    result['page'] = i + 1
+                
+                results.extend(page_results)
+    except Exception as e:
+        logger.error(f"PDF分割エラー: {str(e)}")
+        results.append({
+            'error': f"PDF分割エラー: {str(e)}",
+            'filename': filename
+        })
+    finally:
+        # 一時ディレクトリを削除
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+    
+    return results
+
+# PDFからテキストを抽出する関数
+def extract_text_from_pdf(pdf_path):
+    """
+    PDFからテキストを抽出する関数
+    複数の方法を試し、最初に成功した方法の結果を返す
+    OCRと画像認識機能を強化
+    
+    Args:
+        pdf_path: PDFファイルのパス
+        
+    Returns:
+        抽出されたテキストと使用された方法のタプル、および追加の画像分析情報
+    """
+    methods_tried = []
+    extraction_method = "不明"
+    ocr_data = None
+    layout_info = None
+    
+    # 拡張OCR機能が利用可能な場合は、それを優先して使用
+    if 'ENHANCED_OCR_AVAILABLE' in globals() and ENHANCED_OCR_AVAILABLE:
+        try:
+            logger.info("拡張OCRでの抽出を試行中...")
+            # テンプレートマッチングが利用可能な場合は、まずそれを試す
+            if 'TEMPLATE_MATCHING_AVAILABLE' in globals() and TEMPLATE_MATCHING_AVAILABLE:
+                try:
+                    template_manager = TemplateManager(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates_data'))
+                    result = process_pdf_with_template_matching(pdf_path, template_manager)
+                    if result and result.get('text'):
+                        logger.info(f"テンプレートマッチングでの抽出成功: {len(result['text'])}文字")
+                        return result['text'], "template_matching", result
+                except Exception as e:
+                    logger.warning(f"テンプレートマッチングでのテキスト抽出エラー: {str(e)}")
+            
+            # ハイブリッドOCR抽出を試行
+            if 'extract_text_hybrid' in globals():
+                text = extract_text_hybrid(pdf_path)
+                if text and text.strip():
+                    logger.info(f"拡張OCR(ハイブリッド)での抽出成功: {len(text)}文字")
+                    return text, "enhanced_ocr_hybrid", None
+        except Exception as e:
+            logger.warning(f"拡張OCRでのテキスト抽出エラー: {str(e)}")
+    
+    # AI OCR機能が利用可能な場合は、それを試す
+    if 'AI_OCR_AVAILABLE' in globals() and AI_OCR_AVAILABLE:
+        try:
+            logger.info("AI OCRでの抽出を試行中...")
+            result = process_pdf_with_ai_ocr(pdf_path)
+            if result and isinstance(result, dict) and result.get('text'):
+                logger.info(f"AI OCRでの抽出成功: {len(result['text'])}文字")
+                return result['text'], "ai_ocr", result
+        except Exception as e:
+            logger.warning(f"AI OCRでのテキスト抽出エラー: {str(e)}")
+            
+    # 方法1: pdfplumberを使用
+    try:
+        logger.info("方法1: pdfplumberでテキスト抽出を試行")
+        import pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            text = '\n'.join([page.extract_text() or '' for page in pdf.pages])
+            
+            # レイアウト情報も抽出
+            layout_info = []
+            for i, page in enumerate(pdf.pages):
+                try:
+                    # テーブル情報を取得
+                    tables = page.find_tables()
+                    # テキストボックス情報を取得
+                    words = page.extract_words()
+                    layout_info.append({
+                        'page': i,
+                        'tables': [{'bbox': t.bbox} for t in tables],
+                        'words': words
+                    })
+                except Exception as e:
+                    logger.warning(f"ページ{i}のレイアウト抽出エラー: {str(e)}")
+            
+            if text.strip():
+                logger.info(f"pdfplumberでテキスト抽出成功: {len(text)}文字")
+                methods_tried.append("pdfplumber")
+                return text, "pdfplumber", {"layout_info": layout_info}
+    except Exception as e:
+        logger.warning(f"pdfplumberでのテキスト抽出エラー: {str(e)}")
+    
+    # 方法2: PyPDF2を使用
+    try:
+        logger.info("方法2: PyPDF2でテキスト抽出を試行")
+        text = ''
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            for page in reader.pages:
+                text += page.extract_text() or ''
+        if text.strip():
+            logger.info(f"PyPDF2でテキスト抽出成功: {len(text)}文字")
+            methods_tried.append("PyPDF2")
+            return text, "PyPDF2", None
+    except Exception as e:
+        logger.warning(f"PyPDF2でのテキスト抽出エラー: {str(e)}")
+    
+    # 方法3: OCRを使用
+    try:
+        logger.info("方法3: OCR (pdf2image + pytesseract)でテキスト抽出を試行")
+        # PDFを画像に変換
+        from pdf2image import convert_from_path
+        import pytesseract
+        
+        images = convert_from_path(pdf_path)
+        text = ''
+        ocr_data = []
+        
+        for i, image in enumerate(images):
+            # 画像からテキストを抽出
+            page_text = pytesseract.image_to_string(image, lang='jpn+eng')
+            text += page_text + '\n'
+            
+            # OCR詳細情報を取得（金額検出のため）
+            try:
+                ocr_details = pytesseract.image_to_data(image, lang='jpn+eng', output_type=pytesseract.Output.DICT)
+                
+                # 画像を一時保存（金額の位置分析用）
+                img_path = f"/tmp/ocr_page_{i}.jpg"
+                image.save(img_path, "JPEG")
+                
+                ocr_data.append({
+                    'page': i,
+                    'image_path': img_path,
+                    'width': image.width,
+                    'height': image.height,
+                    'ocr_details': ocr_details
+                })
+            except Exception as e:
+                logger.warning(f"OCR詳細情報の抽出エラー: {str(e)}")
+        
+        if text.strip():
+            logger.info(f"OCRでテキスト抽出成功: {len(text)}文字")
+            methods_tried.append("OCR")
+            return text, "OCR", {"ocr_data": ocr_data}
+    except Exception as e:
+        logger.warning(f"OCRでのテキスト抽出エラー: {str(e)}")
+    
+    # 方法4: ファイル名から情報を抽出
+    try:
+        logger.info("方法4: ファイル名から情報を抽出")
+        filename = os.path.basename(pdf_path)
+        name_without_ext = os.path.splitext(filename)[0]
+        # ファイル名から特殊文字を除去してテキスト化
+        clean_name = re.sub(r'[_\-\d]', ' ', name_without_ext).strip()
+        if clean_name:
+            logger.info(f"ファイル名からの抽出成功: {clean_name}")
+            methods_tried.append("ファイル名")
+            return clean_name, "ファイル名", None
+    except Exception as e:
+        logger.warning(f"ファイル名からの抽出エラー: {str(e)}")
+    
+    # 方法5: pdfminer.sixを使用
+    try:
+        logger.info("方法5: pdfminer.sixでテキスト抽出を試行")
+        from pdfminer.high_level import extract_text as pdfminer_extract_text
+        text = pdfminer_extract_text(pdf_path)
+        if text.strip():
+            logger.info(f"pdfminer.sixでテキスト抽出成功: {len(text)}文字")
+            methods_tried.append("pdfminer.six")
+            return text, "pdfminer.six", None
+    except Exception as e:
+        logger.warning(f"pdfminer.sixでのテキスト抽出エラー: {str(e)}")
+    
+    # 方法6: pdftotextコマンドを使用
+    try:
+        logger.info("方法6: pdftotextコマンドでテキスト抽出を試行")
+        result = subprocess.run(['pdftotext', pdf_path, '-'], capture_output=True, text=True)
+        text = result.stdout
+        if text.strip():
+            logger.info(f"pdftotextコマンドでテキスト抽出成功: {len(text)}文字")
+            methods_tried.append("pdftotext")
+            return text, "pdftotext", None
+    except Exception as e:
+        logger.warning(f"pdftotextコマンドでのテキスト抽出エラー: {str(e)}")
+    
+    # すべての方法が失敗した場合
+    logger.error(f"すべてのテキスト抽出方法が失敗しました。試行した方法: {', '.join(methods_tried)}")
+    return "", "失敗", None
+
+
+def process_pdf(filepath, filename, manual_amount='', interactive=False):
+    """
+    PDFファイルを処理し、客先情報と金額を抽出する関数
+    OCR機能を使用して客先と金額を正確に抽出する
+    
+    Args:
+        filepath: PDFファイルのパス
+        filename: ファイル名
+        manual_amount: 手動入力された金額（空の場合は自動抽出）
+        interactive: インタラクティブ修正モードを有効にするかどうか
+        
+    Returns:
+        抽出結果のリスト
+    """
+    results = []
+    config = get_config()
+    use_ai_ocr = config.get('use_ai_ocr', '0') == '1'
+    use_enhanced_ocr = config.get('use_enhanced_ocr', '0') == '1'
+    use_template_matching = config.get('use_template_matching', '0') == '1'
+    
+    try:
+        logger.info(f"PDF処理開始: {filepath}")
+        
+        # 手動入力された金額がある場合はそれを使用
+        if manual_amount:
+            logger.info(f"手動入力金額を使用: {manual_amount}")
+        
+        # テンプレートマッチングを使用する場合
+        if use_template_matching and TEMPLATE_MATCHING_AVAILABLE:
+            logger.info(f"テンプレートマッチングを使用してPDFを処理: {filename}")
+            try:
+                template_manager = TemplateManager(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates_data'))
+                template_results = process_pdf_with_template_matching(filepath, template_manager)
+                if template_results and template_results.get('text'):
+                    # テンプレートマッチングで成功した場合
+                    customer = template_results.get('customer', '不明')
+                    amount = template_results.get('amount') or manual_amount or '0'
+                    
+                    logger.info(f"テンプレートマッチングで成功: 金額={amount}, 顧客名={customer}")
+                    
+                    # PayPalの支払いリンクを生成
+                    payment_link = create_paypal_payment_link(amount, customer)
+                    
+                    results.append({
+                        'page': 1,
+                        'customer': customer,
+                        'amount': amount,
+                        'payment_link': payment_link,
+                        'filename': filename,
+                        'extraction_method': 'template_matching',
+                        'status': 'success' if payment_link else 'failure'
+                    })
+                    
+                    # インタラクティブ修正モードが有効で、修正機能が利用可能な場合
+                    if interactive and INTERACTIVE_CORRECTION_AVAILABLE:
+                        correction_data = {
+                            'filename': filename,
+                            'customer': customer,
+                            'amount': amount,
+                            'extraction_method': 'template_matching'
+                        }
+                        results[0]['correction_url'] = f"/correction?data={urllib.parse.quote(json.dumps(correction_data))}"
+                    
+                    return results
+            except Exception as e:
+                logger.warning(f"テンプレートマッチングでの処理エラー: {str(e)}")
+        
+        # 拡張OCRを使用する場合
+        if use_enhanced_ocr and ENHANCED_OCR_AVAILABLE:
+            logger.info(f"拡張OCRを使用してPDFを処理: {filename}")
+            try:
+                # 拡張OCRでテキスト抽出
+                try:
+                    text = extract_text_hybrid(filepath)
+                except NameError:
+                    logger.error("extract_text_hybrid関数が定義されていません")
+                    text = ""
+                if text and text.strip():
+                    # 顧客名と金額を抽出
+                    extraction_result = extract_amount_and_customer(text)
+                    customer = extraction_result.customer
+                    amount = extraction_result.amount
+                    
+                    # 手動入力された金額がある場合はそれを優先
+                    if manual_amount:
+                        amount = manual_amount
+                    
+                    logger.info(f"拡張OCRで成功: 金額={amount}, 顧客名={customer}")
+                    
+                    # PayPalの支払いリンクを生成
+                    payment_link = create_paypal_payment_link(amount, customer)
+                    
+                    results.append({
+                        'page': 1,
+                        'customer': customer,
+                        'amount': amount,
+                        'payment_link': payment_link,
+                        'filename': filename,
+                        'extraction_method': 'enhanced_ocr',
+                        'status': 'success' if payment_link else 'failure'
+                    })
+                    
+                    # インタラクティブ修正モードが有効で、修正機能が利用可能な場合
+                    if interactive and INTERACTIVE_CORRECTION_AVAILABLE:
+                        correction_data = {
+                            'filename': filename,
+                            'customer': customer,
+                            'amount': amount,
+                            'extraction_method': 'enhanced_ocr'
+                        }
+                        results[0]['correction_url'] = f"/correction?data={urllib.parse.quote(json.dumps(correction_data))}"
+                    
+                    return results
+            except Exception as e:
+                logger.warning(f"拡張OCRでの処理エラー: {str(e)}")
+        
+        # AI OCRが利用可能で、かつ使用する設定の場合
+        if use_ai_ocr and AI_OCR_AVAILABLE and process_pdf_with_ai_ocr:
+            try:
+                logger.info(f"AI OCRでの処理を開始: {filepath}")
+                
+                # AI OCRで処理
+                ai_result = process_pdf_with_ai_ocr(filepath, manual_amount)
+                
+                # process_pdf_with_ai_ocrの戻り値が名前付きタプルの場合の処理
+                if hasattr(ai_result, 'customer') and hasattr(ai_result, 'amount'):
+                    # 名前付きタプルから属性でアクセス
+                    customer = ai_result.customer
+                    amount = ai_result.amount
+                    
+                    # Noneの場合はデフォルト値に置き換え
+                    if amount is None:
+                        amount = '0'
+                    if customer is None:
+                        customer = '不明'
+                        
+                    logger.info(f"AI OCRで成功: 金額={amount}, 顧客名={customer}")
+                    
+                    # PayPal決済リンクを生成
+                    payment_link = create_paypal_payment_link(amount, customer)
+                    
+                    # 結果を辞書リストに変換して返す
+                    ai_results = [{
+                        'customer': customer,
+                        'amount': amount,
+                        'payment_link': payment_link,
+                        'filename': filename,
+                        'extraction_method': 'ai_ocr'
+                    }]
+                    
+                    # インタラクティブ修正モードが有効で、修正機能が利用可能な場合
+                    if interactive and INTERACTIVE_CORRECTION_AVAILABLE:
+                        correction_data = {
+                            'filename': filename,
+                            'customer': customer or '不明',
+                            'amount': amount or manual_amount or '0',
+                            'extraction_method': 'ai_ocr'
+                        }
+                        ai_results[0]['correction_url'] = f"/correction?data={urllib.parse.quote(json.dumps(correction_data))}"
+                    
+                    # 結果にステータスフィールドを追加
+                    for result in ai_results:
+                        result['status'] = 'success' if result.get('payment_link') else 'failure'
+                    
+                    return ai_results
+                # process_pdf_with_ai_ocrの戻り値が辞書のリストの場合の処理
+                elif isinstance(ai_result, list) and len(ai_result) > 0:
+                    logger.info(f"AI OCRで成功: 金額={ai_result[0].get('amount')}, 顧客名={ai_result[0].get('customer')}")
+                    
+                    # インタラクティブ修正モードが有効で、修正機能が利用可能な場合
+                    if interactive and INTERACTIVE_CORRECTION_AVAILABLE:
+                        correction_data = {
+                            'filename': filename,
+                            'customer': ai_result[0].get('customer', '不明'),
+                            'amount': ai_result[0].get('amount', '0'),
+                            'extraction_method': 'ai_ocr'
+                        }
+                        ai_result[0]['correction_url'] = f"/correction?data={urllib.parse.quote(json.dumps(correction_data))}"
+                    
+                    # 結果にステータスフィールドを追加
+                    for result in ai_result:
+                        result['status'] = 'success' if result.get('payment_link') else 'failure'
+                    
+                    return ai_result
+                else:
+                    logger.warning("AI OCRの結果が予期しない形式です。従来の方法を試します。")
+            except Exception as e:
+                logger.error(f"AI OCR処理エラー: {str(e)}")
+                logger.warning("AI OCRでの抽出に失敗しました。従来の方法を試します。")
+        
+        # 強化された方法でPDFからテキストを抽出
+        text, extraction_method, additional_info = extract_text_from_pdf(filepath)
+        
+        logger.info(f"抽出方法: {extraction_method}")
+        logger.info(f"抽出対象テキスト（一部）: {text[:100]}...")
+        logger.info(f"テキスト全体の長さ: {len(text)}文字")
+        
+        logger.info("*** 顧客名パターンマッチング開始 ***")
+        
+        # PDFの左側部分（顧客名が記載されている可能性が高い）を抽出
+        left_text = ""
+        try:
+            with pdfplumber.open(filepath) as pdf:
+                for page in pdf.pages:
+                    # ページの左半分のみを対象にする
+                    left_crop = page.crop((0, 0, page.width / 2, page.height))
+                    left_text += (left_crop.extract_text() or "") + "\n"
+        except Exception as e:
+            logger.warning(f"左側テキスト抽出エラー: {str(e)}")
+        
+        logger.info("\n--- 左側テキスト(顧客対象) ---")
+        logger.info(left_text[:200] + "..." if len(left_text) > 200 else left_text)
+        
+        # 重要なセクションを探す（請求書、納品書、見積書など）
+        important_sections = []
+        section_patterns = [r'請求書', r'納品書', r'見積書', r'発注書', r'注文書']
+        for pattern in section_patterns:
+            if re.search(pattern, text):
+                important_sections.append(pattern)
+        
+        logger.info(f"\n発見された重要セクション: {len(important_sections)}個")
+        
+        # PDFの左上部分を特に注目（顧客名が記載されていることが多い）
+        top_left_text = ""
+        try:
+            with pdfplumber.open(filepath) as pdf:
+                if pdf.pages:
+                    page = pdf.pages[0]  # 最初のページ
+                    # ページの左上部分のみを対象にする
+                    top_left = page.crop((0, 0, page.width / 2, page.height / 3))
+                    top_left_text = top_left.extract_text() or ""
+        except Exception as e:
+            logger.warning(f"左上テキスト抽出エラー: {str(e)}")
+        
+        logger.info(f"PDF左上部分（顧客名抽出用）: {top_left_text[:200]}...")
+        
+        # 顧客名と金額を抽出（まず左側テキストから試す）
+        try:
+            # 名前付きタプルを使用
+            extraction_result = extract_amount_and_customer(left_text)
+            customer = extraction_result.customer
+            amount = extraction_result.amount
+            # Noneの場合はデフォルト値に置き換え
+            if customer is None:
+                customer = '不明'
+            if amount is None:
+                amount = '0'
+        except Exception as e:
+            logger.error(f"左側テキストからの抽出エラー: {str(e)}")
+            customer = '不明'
+            amount = '0'
+        
+        # 左側から抽出できなかった場合、全体テキストから試す
+        if customer == '不明':
+            try:
+                # 名前付きタプルを使用
+                extraction_result_full = extract_amount_and_customer(text)
+                customer_full = extraction_result_full.customer
+                amount_full = extraction_result_full.amount
+                # Noneの場合はデフォルト値に置き換え
+                if customer_full is None:
+                    customer_full = '不明'
+                if amount_full is None:
+                    amount_full = '0'
+                    
+                if customer_full != '不明':
+                    customer = customer_full
+                if amount == '0' or not amount:
+                    amount = amount_full
+            except Exception as e:
+                logger.error(f"全体テキストからの抽出エラー: {str(e)}")
+                # エラーが発生した場合はデフォルト値を使用
+                if customer == '不明':
+                    customer = '不明'
+                if amount == '0' or not amount:
+                    amount = '0'
+        
+        # 手動入力された金額がある場合はそれを優先
+        if manual_amount:
+            amount = manual_amount
+        
+        # 顧客名が抽出できなかった場合、ファイル名から推測
+        if customer == '不明':
+            # ファイル名から拡張子を除去
+            name_without_ext = os.path.splitext(filename)[0]
+            # 特殊文字を除去
+            name_without_ext = re.sub(r'[_\-\d]', ' ', name_without_ext).strip()
+            if name_without_ext:
+                customer = name_without_ext
+        
+        # PayPalの支払いリンクを生成
+        payment_link = create_paypal_payment_link(amount, customer)
+        
+        # 結果を追加
+        results.append({
+            'page': 1,
+            'customer': customer,
+            'amount': amount,
+            'payment_link': payment_link,
+            'filename': filename,
+            'extraction_method': extraction_method,
+            'status': 'success' if payment_link else 'failure'
+        })
+        
+        # 顧客名と金額が両方とも取得できなかった場合
+        if customer == '不明' and (not amount or amount == '0'):
+            results[0]['error'] = '情報を抽出できませんでした'
+    
+    except Exception as e:
+        logger.error(f"PDF処理エラー: {str(e)}")
+        results.append({
+            'page': 1,
+            'customer': 'エラー',
+            'amount': manual_amount or '0',
+            'payment_link': '',
+            'filename': filename,
+            'error': f"処理エラー: {str(e)}",
+            'status': 'failure'
+        })
+    
+    return results
+
+# PayPal決済リンク生成関数
+def extract_amount_and_customer(text):
+    """
+    PDFから抽出したテキストから顧客名と金額を抽出する
+    
+    Args:
+        text: 抽出されたテキスト
+        
+    Returns:
+        ExtractionResult: 顧客名と金額を含む名前付きタプル。常に文字列型で返す。
+        顧客名が見つからない場合は '不明'、金額が見つからない場合はデフォルト値を返す。
+    """
+    config = get_config()
+    enable_customer_extraction = config.get('enable_customer_extraction', '1') == '1'
+    enable_amount_extraction = config.get('enable_amount_extraction', '1') == '1'
+    default_amount = config.get('default_amount', '1000')
+    
+    customer = '不明'
+    amount = default_amount
+    
+    # テキストが空の場合は早期リターン
+    if not text:
+        logger.warning("金額抽出: テキストが空です")
+        return ExtractionResult(customer=customer, amount=amount)
+    
+    # デバッグ用にテキストの一部を表示
+    logger.info(f"金額抽出対象テキスト（最初の200文字）: {text[:200]}...")
+    
+    # 顧客名の抽出（有効な場合）
+    if enable_customer_extraction:
+        # 「様」や「御中」などの敬称を含む行を探す
+        customer_patterns = [
+            r'(.+)様',  # 「様」が付くパターン
+            r'(.+)御中',  # 「御中」が付くパターン
+            r'(.+)殿',  # 「殿」が付くパターン
+            r'客様名[\uff1a:]?\s*(.+)',  # 「客様名：」の後に続くパターン
+            r'顧客名[\uff1a:]?\s*(.+)',  # 「顧客名：」の後に続くパターン
+            r'引き渡し先[\uff1a:]?\s*(.+)'  # 「引き渡し先：」の後に続くパターン
+        ]
+        
+        for pattern in customer_patterns:
+            matches = re.findall(pattern, text)
+            if matches:
+                # 最初に見つかった顧客名を使用
+                customer = matches[0].strip()
+                logger.info(f"顧客名抽出成功: '{customer}' (パターン: {pattern})")
+                break
+    
+    # 金額の抽出（有効な場合）
+    if enable_amount_extraction:
+        # デバッグ用に元のテキストを表示
+        logger.info(f"金額抽出対象テキスト（全文）: {text}")
+        # 各行を個別に表示して確認
+        for i, line in enumerate(text.split('\n')):
+            logger.debug(f"行 {i+1}: {line}")
+            # 「¥ 781 -」のようなパターンを特別に検出
+            if re.search(r'[¥\￥]\s*\d{1,3}(?:[,.]\d{1,3})*\s*(?:-|–|—|−)', line) or \
+               re.search(r'\d{1,3}\s*(?:-|–|—|−)', line):
+                logger.info(f"少額請求書パターン検出: {line}")
+        
+        # 金額パターンを優先度別に定義
+        # 優先度1: 請求書で最も重要な金額を示すキーワード
+        priority1_patterns = [
+            # 通貨記号と数字のパターン（最優先）
+            r'[¥\￥]\s*(\d{1,3}(?:[,.]\d{1,3})*)\s*(?:-|–|—|−)',  # ¥ 781 - パターン（少額請求書用）
+            r'[¥\￥]\s*(\d{1,3}(?:[,.]\d{1,3})*)\s*(?:円|JPY|jpy)?\s*(?:-|–|—|−)?',  # ¥ 781円 - パターン
+            r'[¥\￥]\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # ¥ 781 パターン
+            r'(\d{1,3})\s*(?:-|–|—|−)',  # 781 - パターン（通貨記号なしの少額請求書用）
+            
+            # 表形式のパターンを追加
+            r'金額[\s\u3000]*[¥\\￥]?[\s\u3000]*(\d{1,3}(?:[,.]\d{1,3})*)(?:[\s\u3000]*(?:-|–|—|−))?',  # 金額 ¥ 781 -
+            r'合計[\s\u3000]*[¥\\￥]?[\s\u3000]*(\d{1,3}(?:[,.]\d{1,3})*)(?:[\s\u3000]*(?:-|–|—|−))?',  # 合計 ¥ 781 -
+            r'請求額[\s\u3000]*[¥\\￥]?[\s\u3000]*(\d{1,3}(?:[,.]\d{1,3})*)(?:[\s\u3000]*(?:-|–|—|−))?',  # 請求額 ¥ 781 -
+            
+            # 表の行列構造を考慮したパターン
+            r'(?:金額|合計|請求額)[^\n]*?[\t\s\u3000]*[¥\\￥]?[\s\u3000]*(\d{1,3}(?:[,.]\d{1,3})*)(?:[\s\u3000]*(?:-|–|—|−))?',  # 表の行に金額と数字がある
+            r'(?:金額|合計|請求額)[\s\u3000]*[\n][\s\u3000]*[¥\\￥]?[\s\u3000]*(\d{1,3}(?:[,.]\d{1,3})*)(?:[\s\u3000]*(?:-|–|—|−))?',  # 金額の次の行に数字
+            
+            # 金額キーワードと数字のパターン
+            r'金額\s*[¥\\￥]?\s*(\d{1,3}(?:[,.]\d{1,3})*)(?:\s*-|\s*–|\s*—|−)?',  # 金額 ¥ 781 - (請求書中央によく表示されるパターン)
+            r'金\s*額\s*[¥\\￥]?\s*(\d{1,3}(?:[,.]\d{1,3})*)(?:\s*-|\s*–|\s*—|−)?',  # 金 額 ¥ 781 - (スペースが入るパターン)
+            r'金\s*額[^\d]*(\d{1,3}(?:[,.]\d{1,3})*)(?:\s*-|\s*–|\s*—|−)?',  # 「金額」の後に数字がある
+            r'合\s*計[^\d]*(\d{1,3}(?:[,.]\d{1,3})*)(?:\s*-|\s*–|\s*—|−)?',  # 「合計」の後に数字がある
+            r'請求(?:金額|総額|合計)[：:]*\s*[¥\\￥]*\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # 請求金額：5,000
+            r'(?:税込|税抜)(?:合計|金額)[：:]*\s*[¥\\￥]*\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # 税込合計：5,000
+            r'(?:お)?支払(?:金額|総額|合計)[：:]*\s*[¥\\￥]*\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # お支払金額：5,000
+            r'総額[：:]*\s*[¥\\￥]*\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # 総額：5,000
+            r'合計(?:金額)?[：:]*\s*[¥\\￥]*\s*(\d{1,3}(?:[,.]\d{1,3})*)',  # 合計金額：5,000
+            r'御請求金額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 御請求金額：5,000
+            r'請求書(?:金額|総額)?[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 請求書金額：5,000
+            r'(?:ご)?利用(?:金額|総額)[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # ご利用金額：5,000
+            r'合計[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 合計：5,000
+            r'総請求額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 総請求額：5,000
+            r'(?:お)?見積(?:金額|総額|合計)[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # お見積金額：5,000
+            r'(?:お)?会計(?:金額|総額|合計)[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # お会計金額：5,000
+            r'(?:ご)?請求(?:金額|総額|合計)[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # ご請求金額：5,000
+        ]
+        
+        # 優先度2: 一般的な金額表記
+        priority2_patterns = [
+            r'金額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 金額：5,000
+            r'金[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 金：5,000
+            r'小計[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 小計：5,000
+            r'Total[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # Total: 5,000
+            r'Amount[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # Amount: 5,000
+            r'御請求額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 御請求額：5,000
+            r'金額(?:合計)?[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 金額合計：5,000
+            r'請求額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 請求額：5,000
+            r'請求金[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 請求金：5,000
+            r'合計額[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 合計額：5,000
+            r'サービス料金[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # サービス料金：5,000
+            r'料金[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 料金：5,000
+            r'価格[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 価格：5,000
+            r'費用[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 費用：5,000
+            r'代金[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 代金：5,000
+            r'売上[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 売上：5,000
+            r'(?:商品|製品)(?:金額|価格)[\uff1a:]*\s*[¥\\￥]*\s*([\d,.]+)',  # 商品金額：5,000
+        ]
+        
+        # 優先度3: 通貨記号や単位を伴う金額
+        priority3_patterns = [
+            r'([\d,.]+)\s*円(?![\d])',  # 5,000円 (数字が後に続かないもの)
+            r'[¥\\￥]\s*([\d,.]+)(?:\s*-|\s*–|\s*—)?',  # ¥5,000, ¥5,000-, ¥5,000–, ¥5,000—
+            r'[¥\\￥]\s*([\d,.]+)(?:\s*円)?',  # ¥5,000, ¥5,000円
+            r'([\d,.]+)(?:\s*円|円のみ)',  # 5,000円のみ
+            r'([\d,.]+)(?:\s*(?:円|JPY|jpy))',  # 5,000 円 or 5,000 JPY
+            r'(?:金額|合計|総額|請求額|支払額|料金)[:：]\s*([\d,.]+)',  # 金額: 5000（通貨記号なし）
+            r'(?:金額|合計|総額|請求額|支払額|料金)[^\d]+([\d,.]+)',  # 「金額」などの後に数字がある場合
+            r'([\d,.]+)\s*(?:のみ|だけ|税込|税抜)',  # 5,000のみ、5,000だけ、5,000税込
+            r'([\d,.]+)\s*(?:円|万円)(?:也|のみ|になります|です|でした)',  # 5,000円也、5,000円になります
+            r'(?:合計|総額|請求額)(?:は|：|:)?\s*([\d,.]+)',  # 合計は5,000
+            r'(?:お支払い|お支払|支払い|支払)(?:金額|金|額)?(?:は|：|:)?\s*([\d,.]+)',  # お支払い金額は5,000
+            r'(?:ご|御)?(?:請求|利用)(?:金額|金|額)?(?:は|：|:)?\s*([\d,.]+)'  # ご請求金額は5,000
+        ]
+        
+        # 優先度4: 単独の数字（最後の手段）
+        priority4_patterns = [
+            # 金額らしい数字のみを抽出するように改善
+            r'(?<!\d)([1-9][\d]{2,6}(?:[,.][\d]{2})?)(?!\d)'  # 3桁から9桁以下の数字（小数点以下2桁まで許容）
+        ]
+        
+        # 全パターンをリストにまとめる（優先度順）
+        all_patterns = [
+            (1, priority1_patterns),
+            (2, priority2_patterns),
+            (3, priority3_patterns),
+            (4, priority4_patterns)
+        ]
+        
+        # 金額抽出の結果を保存する辞書（優先度ごと）
+        found_amounts = {1: [], 2: [], 3: [], 4: []}
+        
+        # テキストを行に分割して処理（行ごとのコンテキストを保持するため）
+        lines = text.split('\n')
+        
+        # 金額候補を収集
+        amount_candidates = []
+        
+        # 優先度1のパターンで検索
+        for pattern in priority1_patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                # カンマや空白を削除して数値化
+                clean_match = match.replace(',', '').replace(' ', '').replace('，', '')
+                try:
+                    amount_value = int(clean_match)
+                    # 異常に大きな数値（例：7桁以上）は受給者番号などの可能性が高いのでスキップ
+                    if len(str(amount_value)) >= 7:
+                        # 受給者番号らしき特定パターンをチェック
+                        if len(str(amount_value)) >= 9 and str(amount_value).startswith(('3', '4', '5')):
+                            logger.warning(f"受給者番号らしき数値をスキップ: {amount_value}, 桁数: {len(str(amount_value))}")
+                            continue
+                        # 100万円以上の金額は要注意だがスキップはしない
+                        logger.warning(f"大きな数値を検出（金額か要確認）: {amount_value}, 桁数: {len(str(amount_value))}")
+                    
+                    amount_candidates.append({
+                        'amount': amount_value,
+                        'score': 100,  # 優先度1は高スコア
+                        'priority': 1,
+                        'raw': match,
+                        'line': get_line_containing(text, match)
+                    })
+                except ValueError:
+                    pass
+        
+        # 各優先度のパターンで検索
+        for priority, patterns in all_patterns:
+            for line in lines:
+                for pattern in patterns:
+                    matches = re.findall(pattern, line)
+                    if matches:
+                        for match in matches:
+                            # カンマと空白を除去して数値に変換
+                            clean_match = match.replace(',', '').replace(' ', '').replace('，', '')
+                            try:
+                                amount_value = int(clean_match)
+                                # 基本スコアは優先度に基づく
+                                score = (5 - priority) * 20  # 優先度に応じた基本スコア
+                                line_lower = line.lower()
+                                
+                                # キーワードスコアリング
+                                billing_keywords = {
+                                    '請求': 25, '金額': 25, '合計': 22, '総額': 22, '支払': 20, 
+                                    '円': 15, '料金': 20, '検収': 15, '小計': 15, '税込': 20,
+                                    '税別': 15, 'total': 22, '価格': 20, '値段': 20, 'amount': 25,
+                                    '御請求': 25, 'お支払': 22, 'お見積': 18, '売上': 15,
+                                    '代金': 20, '費用': 20, '合結': 22, '小計': 15, '納入': 15,
+                                    'jpy': 20, '円マーク': 20, '合計額': 22, '請求額': 25,
+                                    'ご請求': 25, '御請求': 25, 'お会計': 22, 'お支払い': 22,
+                                    'ご利用': 20, '請求書': 25, 'インボイス': 25, 'invoice': 25,
+                                    '領収': 20, '領収書': 20, '領収額': 20, '支払額': 22
+                                }
+                                
+                                for keyword, keyword_score in billing_keywords.items():
+                                    if keyword in line_lower:
+                                        score += keyword_score
+                                
+                                # 通貨記号が含まれる場合はスコアアップ
+                                if any(symbol in line_lower for symbol in ['¥', '％', 'jpy', '円']):
+                                    score += 15
+                                
+                                # 最終判定
+                                is_recipient_number = score < 0
+                                
+                                # 受給者番号でない場合のみ追加
+                                if score > 0:
+                                    found_amounts[priority].append((amount_value, pattern, line.strip()))
+                                    logger.info(f"金額候補発見 (優先度{priority}): {amount_value}円 (パターン: {pattern})")
+                                    logger.info(f"抽出行: {line.strip()}")
+                            except (ValueError, IndexError) as e:
+                                logger.warning(f"金額変換エラー: {match}, {str(e)}")
+        
+        # 全ての金額候補をスコアリングして評価
+        all_candidates = []
+        
+        # 各金額にスコア付け
+        for priority, amounts in found_amounts.items():
+            for amount, pattern, line in amounts:
+                # 基本スコアは優先度に基づく
+                score = (5 - priority) * 20  # 優先度に応じた基本スコア
+                line_lower = line.lower()
+                
+                # キーワードスコアリング
+                billing_keywords = {
+                    '請求': 25, '金額': 25, '合計': 22, '総額': 22, '支払': 20, 
+                    '円': 15, '料金': 20, '検収': 15, '小計': 15, '税込': 20,
+                    '税別': 15, 'total': 22, '価格': 20, '値段': 20, 'amount': 25,
+                    '御請求': 25, 'お支払': 22, 'お見積': 18, '売上': 15,
+                    '代金': 20, '費用': 20, '合結': 22, '小計': 15, '納入': 15,
+                    'jpy': 20, '円マーク': 20, '合計額': 22, '請求額': 25,
+                    'ご請求': 25, '御請求': 25, 'お会計': 22, 'お支払い': 22,
+                    'ご利用': 20, '請求書': 25, 'インボイス': 25, 'invoice': 25,
+                    '領収': 20, '領収書': 20, '領収額': 20, '支払額': 22
+                }
+                
+                # キーワードスコア
+                for keyword, keyword_score in billing_keywords.items():
+                    if keyword in line_lower:
+                        score += keyword_score
+                        logger.debug(f"キーワードスコア: +{keyword_score} ({keyword})")
+                
+                # 金額の妥当性スコア
+                if 100 <= amount <= 1000:
+                    score += 5  # 少額請求
+                elif 1000 < amount <= 10000:
+                    score += 15  # 一般的な請求額
+                elif 10000 < amount <= 100000:
+                    score += 10  # 高額請求
+                elif 100000 < amount <= 1000000:
+                    score += 5   # 非常に高額だがあり得る
+                elif amount > 1000000:
+                    score -= 10   # 異常に高額
+                
+                # 桁数に基づくペナルティ（強化版）
+                digit_count = len(str(amount))
+                if digit_count >= 7:  # 7桁以上は受給者番号などの可能性が高い
+                    # 7桁で100点、8桁で200点、9桁で400点と指数関数的に増加
+                    penalty = 100 * (2 ** (digit_count - 7))
+                    score -= penalty
+                    logger.debug(f"桁数ペナルティ: -{penalty} ({digit_count}桁)")
+                    
+                    # 受給者番号らしき数値（9-10桁の特定パターン）には特別な大きなペナルティ
+                    if 9 <= digit_count <= 10 and str(amount).startswith(('3', '4', '5')):
+                        score -= 3000  # 受給者番号には非常に大きなペナルティを強化
+                        logger.debug(f"受給者番号パターンペナルティ: -3000 ({amount})")
+                    
+                    # 受給者番号や会員番号などの可能性がある数字には大きなペナルティ
+                    if 7 <= digit_count <= 10 and str(amount).startswith(('3', '4', '5', '6', '7', '8', '9')):
+                        score -= 1500  # 大きな番号にはペナルティ
+                        logger.debug(f"番号系パターンペナルティ: -1500 ({amount})")
+                        
+                    # 明らかに受給者番号と思われる場合は、スコアを大幅に下げる
+                    if '受給者' in line or '番号' in line or '会員' in line or '客番' in line:
+                        score -= 4000
+                        logger.debug(f"受給者番号キーワードペナルティ: -4000 ({amount})")
+                        
+                    # 桁数が多すぎる場合は金額ではない可能性が高い
+                    if digit_count > 6:
+                        score -= 1000 * (digit_count - 6)  # 7桁で-1000、8桁で-2000、という具合
+                        logger.debug(f"桁数超過ペナルティ: -{1000 * (digit_count - 6)} ({digit_count}桁)")
+                    
+                
+                # 請求書関連キーワードスコア
+                invoice_keywords = ['請求書', '請求書番号', 'インボイス', 'invoice', '領収書', 'receipt', '納品書', 'delivery note', '御請求書', 'ご請求書']
+                for keyword in invoice_keywords:
+                    if keyword in line_lower:
+                        score += 20
+                        logger.debug(f"請求書キーワードスコア: +20 ({keyword})")
+                
+                # 「金額」と「¥」マークが同じ行にある場合の特別ボーナス
+                if '金額' in line and any(symbol in line for symbol in ['¥', '\\', '￥']):
+                    score += 150  # ボーナスを増加
+                    logger.debug(f"金額と通貨記号の特別ボーナス: +150点")
+                    
+                # 通貨記号とハイフンがある場合の特別ボーナス
+                if any(symbol in line for symbol in ['¥', '\\', '￥']) and any(h in line for h in ['-', '–', '—', '−']):
+                    if amount < 1000:
+                        score += 500  # 少額請求書の金額に対するボーナスを増加
+                    else:
+                        score += 200
+                        
+                # 「¥ 781 -」パターンに完全一致する場合の特別ボーナス
+                if re.search(r'[¥\\￥]\s*\d{1,3}(?:[,.]\d{1,3})*\s*(?:-|–|—|−)', line):
+                    score += 350  # ボーナスを増加
+                    
+                # 「781 -」パターン（通貨記号なし）に対するボーナス
+                if re.search(r'\d{1,3}[\s\u3000]*(?:-|–|—|−)', line):
+                    score += 200  # ボーナスを増加
+                    
+                # 3桁の少額請求書の金額に対する特別ボーナス
+                if 100 <= amount < 1000:
+                    if any(symbol in line for symbol in ['¥', '\\', '￥']) and any(h in line for h in ['-', '–', '—', '−']):
+                        score += 400  # 通貨記号とハイフンを含む少額金額のボーナスを増加
+                        
+                        # 「¥ 781 -」のような完全一致パターンにはさらに高いボーナス
+                        if re.search(r'[¥\\￥]\s*\d{3}\s*[-–—−]', line):
+                            exact_match_bonus = 300
+                            score += exact_match_bonus
+                            logger.debug(f"¥ 781 - パターン完全一致ボーナス: +{exact_match_bonus}点")
+                    else:
+                        score += 200  # 少額金額のボーナスを増加
+                    logger.debug(f"少額金額ボーナス適用: +200点以上")
+                    
+                # 3桁の数字で通貨記号とハイフンがある場合は金額の可能性が非常に高い
+                if 100 <= amount < 1000 and any(symbol in line for symbol in ['¥', '\\', '￥']) and any(h in line for h in ['-', '–', '—', '−']):
+                    score += 200
+                    logger.debug(f"3桁数字ハイフンパターンボーナス: +200点 ({amount})")
+                    
+                # 金額の後にハイフンがある場合のボーナス
+                if re.search(r'\d[\s\u3000]*(?:-|–|—|−)', line):
+                    score += 100
+                    logger.debug(f"数字後ハイフンボーナス: +100点")
+                    
+                # 3桁の数字に対するボーナス（少額請求書の場合）
+                if 100 <= amount < 1000:
+                    score += 30  # 3桁の数字には適度なボーナス
+                    logger.debug(f"3桁数字ボーナス: +30点 ({amount})")
+                    
+                # 通貨記号がある場合のボーナス
+                if any(symbol in line for symbol in ['¥', '\\', '￥', '円']):
+                    try:
+                        # 行の位置を特定
+                        line_index = -1
+                        for i, l in enumerate(lines_list):
+                            if line.strip() in l:
+                                line_index = i
+                                break
+                        
+                        if line_index >= 0:
+                            middle_index = len(lines_list) // 2
+                            distance_from_middle = abs(line_index - middle_index)
+                            max_distance = len(lines_list) // 3  # 全体の1/3を最大距離とする
+                            
+                            # 中央に近いほど高いボーナス（最大80点）- 中央配置金額の検出を強化
+                            if distance_from_middle < max_distance:
+                                center_bonus = max(0, 80 - (distance_from_middle * 80 // max_distance))
+                                score += center_bonus
+                                logger.debug(f"中央位置ボーナス: +{center_bonus}点 (行位置: {line_index}, 中央からの距離: {distance_from_middle})")
+                                
+                                                # 中央付近かつ「金額」というキーワードを含む行には特別ボーナス
+                                if any(kw in line.lower() for kw in ['金額', '合計', '請求', 'total', 'amount']):
+                                    keyword_bonus = 120  # ボーナスを倍増
+                                    score += keyword_bonus
+                                    logger.debug(f"中央金額キーワードボーナス: +{keyword_bonus}点")
+                                    
+                                    # 「金額」と数値が近接している場合、さらにボーナス
+                                    if '金額' in line and re.search(r'金額[^\d]{0,10}[\d]', line):
+                                        proximity_bonus = 100
+                                        score += proximity_bonus
+                                        logger.debug(f"金額近接ボーナス: +{proximity_bonus}点")
+                                    
+                                # 中央付近かつ通貨記号を含む行には特別ボーナス
+                                if any(symbol in line for symbol in ['¥', '\\', '￥', '円']):
+                                    currency_bonus = 50
+                                    score += currency_bonus
+                                    logger.debug(f"中央通貨記号ボーナス: +{currency_bonus}点")
+                    except Exception as e:
+                        logger.debug(f"中央位置計算エラー: {str(e)}")
+                        
+                # OCRデータが利用可能な場合、位置情報を使用して中央に配置された金額を検出
+                if 'ocr_data' in globals() and ocr_data:
+                    try:
+                        for page_data in ocr_data:
+                            ocr_details = page_data.get('ocr_details', {})
+                            width = page_data.get('width', 0)
+                            height = page_data.get('height', 0)
+                            
+                            if width > 0 and height > 0 and 'text' in ocr_details:
+                                for i, word_text in enumerate(ocr_details['text']):
+                                    if str(amount) in word_text:
+                                        try:
+                                            # 単語の位置情報を取得
+                                            x = ocr_details['left'][i] if 'left' in ocr_details else 0
+                                            y = ocr_details['top'][i] if 'top' in ocr_details else 0
+                                            
+                                            # 中央からの距離（0~1の値、0が中央、1が端）
+                                            x_center_dist = abs(x - (width / 2)) / (width / 2)  # 0~1の値（0が中央）
+                                            y_center_dist = abs(y - (height / 2)) / (height / 2)  # 0~1の値（0が中央）
+                                            
+                                            # 中央からの距離（0~1の値、0が中央、1が端）
+                                            center_dist = (x_center_dist + y_center_dist) / 2
+                                            
+                                            # 中央に近いほど高いボーナス（最大300点）
+                                            ocr_center_bonus = int((1 - center_dist) * 300)  # 中央ボーナスを増加
+                                            score += ocr_center_bonus
+                                            
+                                            # 中央上部（請求書の金額がよく表示される場所）にある場合の特別ボーナス
+                                            if 0.4 <= x_center_dist <= 0.6 and y_center_dist <= 0.4:
+                                                score += 200
+                                                logger.debug(f"OCR中央上部位置ボーナス: +200点")
+                                            
+                                            logger.debug(f"OCR中央位置ボーナス: +{ocr_center_bonus}点 (距離: {center_dist:.2f})")
+                                            
+                                            # 金額キーワードの近くにある場合の特別ボーナス
+                                            for j, other_text in enumerate(ocr_details['text']):
+                                                if '金額' in other_text or '合計' in other_text:
+                                                    other_x = ocr_details['left'][j] if 'left' in ocr_details else 0
+                                                    other_y = ocr_details['top'][j] if 'top' in ocr_details else 0
+                                                    
+                                                    # 金額キーワードとの距離
+                                                    keyword_dist = math.sqrt((x - other_x)**2 + (y - other_y)**2)
+                                                    
+                                                    if keyword_dist < 100:  # 近い場合
+                                                        keyword_bonus = int((1 - keyword_dist / 100) * 400)
+                                                        score += keyword_bonus
+                                                        logger.debug(f"OCR金額キーワード近接ボーナス: +{keyword_bonus}点 (距離: {keyword_dist})")
+                                                        break
+                                        except Exception as e:
+                                            logger.debug(f"OCR位置計算エラー: {str(e)}")
+                    except Exception as e:
+                        logger.debug(f"OCR位置計算エラー: {str(e)}")
+                
+                all_candidates.append((amount, score, priority, pattern, line))
+                logger.info(f"金額候補: {amount}円, スコア: {score}, 優先度: {priority}, 行: {line}")
+        
+        # スコアの高い順にソートし、同スコアなら優先度の高い順
+        if all_candidates:
+            all_candidates.sort(key=lambda x: (-x[1], x[2]))
+            
+            # 最高スコアの候補が異常に大きな数値（7桁以上）の場合は、次の候補を探す
+            top_candidate = all_candidates[0]
+            top_amount = top_candidate[0]
+            top_score = top_candidate[1]
+            
+            if len(str(top_amount)) >= 7 and len(all_candidates) > 1:
+                logger.warning(f"最高スコアの候補が大きな数値です: {top_amount}円 (スコア: {top_score})")
+                
+                # スコアが正で桁数が少ない候補を探す
+                reasonable_candidate_found = False
+                for candidate in all_candidates[1:]:
+                    candidate_amount = candidate[0]
+                    candidate_score = candidate[1]
+                    
+                    # 7桁以下でスコアが正の候補を選択
+                    if len(str(candidate_amount)) < 7 and candidate_score > 0:
+                        logger.info(f"より妥当な候補を選択: {candidate_amount}円 (スコア: {candidate_score}, 元の候補: {top_amount}円)")
+                        all_candidates[0] = candidate
+                        reasonable_candidate_found = True
+                        break
+                
+                # 妥当な候補が見つからない場合はスコアで判断
+                if not reasonable_candidate_found:
+                    # スコアが正の場合は大きな数値でも採用
+                    if top_score > 50:
+                        logger.info(f"大きな数値ですがスコアが高いため採用します: {top_amount}円 (スコア: {top_score})")
+                    else:
+                        logger.warning(f"妥当な金額候補が見つからないため、デフォルト値を使用します")
+                        all_candidates[0] = (int(default_amount), 0, 0, "デフォルト値", "")
+            
+            selected_amount = all_candidates[0][0]
+            selected_score = all_candidates[0][1]
+            selected_priority = all_candidates[0][2]
+            selected_pattern = all_candidates[0][3]
+            selected_line = all_candidates[0][4]
+            
+            # 最終チェック - 金額の妥当性検証
+            logger.info(f"金額最終検証: 選択候補={selected_amount}円, スコア={selected_score}, 優先度={selected_priority}")
+            
+            # 「¥ 781 -」パターンの少額請求書の金額を優先的に探す
+            # 少額請求書の金額候補を探す
+            small_amount_candidates = []
+            for candidate in all_candidates:
+                candidate_amount = candidate[0]
+                candidate_score = candidate[1]
+                candidate_line = candidate[4]
+                
+                # 3桁の少額請求書でハイフン付きパターンに一致する候補
+                if 100 <= candidate_amount < 1000 and candidate_score > 0:
+                    # 通貨記号とハイフンがある場合は高いスコアを与える
+                    if any(symbol in candidate_line for symbol in ['¥', '\\', '￥']) and \
+                       any(h in candidate_line for h in ['-', '–', '—', '−']):
+                        small_amount_candidates.append((candidate_amount, candidate_score + 500, candidate))
+                    else:
+                        small_amount_candidates.append((candidate_amount, candidate_score + 100, candidate))
+            
+            # 少額請求書の金額候補があれば、それを優先する
+            if small_amount_candidates:
+                small_amount_candidates.sort(key=lambda x: -x[1])  # スコアの高い順にソート
+                logger.info(f"少額請求書の金額候補を発見: {small_amount_candidates[0][0]}円 (スコア: {small_amount_candidates[0][1]})")
+                
+                # 当初選択された金額よりも少額請求書の金額候補のスコアが高い場合は、少額請求書の金額を選択
+                if small_amount_candidates[0][1] > selected_score + 100:  # 少額請求書の金額にはボーナスを与える
+                    selected_amount = small_amount_candidates[0][0]
+                    logger.info(f"少額請求書の金額を優先的に選択: {selected_amount}円 (スコア: {small_amount_candidates[0][1]})")
+            
+            # 受給者番号や会員番号などの誤検出を防止
+            is_suspicious = False
+            
+            # 桁数が多すぎる場合は受給者番号などの可能性が高い
+            if len(str(selected_amount)) >= 7:
+                is_suspicious = True
+                logger.warning(f"選択された金額の桁数が多すぎます: {len(str(selected_amount))}桁")
+            
+            # 特定のパターン（3,4,5で始まる7桁以上）は受給者番号の可能性が高い
+            if len(str(selected_amount)) >= 7 and str(selected_amount).startswith(('3', '4', '5', '6', '7', '8', '9')):
+                is_suspicious = True
+                logger.warning(f"選択された金額が受給者番号パターンに一致します: {selected_amount}")
+            
+            # スコアが低い場合も不審
+            if selected_score < 0:
+                is_suspicious = True
+                logger.warning(f"選択された金額のスコアが低すぎます: {selected_score}")
+            
+            # 不審な金額が選択された場合は代替候補を探す
+            if is_suspicious:
+                # 中小金額の候補を探す
+                reasonable_candidates = [c for c in all_candidates if 100 <= c[0] < 10000 and c[1] > 0]
+                
+                if reasonable_candidates:
+                    # 最もスコアが高い候補を選択
+                    reasonable_candidates.sort(key=lambda x: -x[1])
+                    selected_amount = reasonable_candidates[0][0]
+                    logger.info(f"妥当な金額候補を採用: {selected_amount}円 (スコア: {reasonable_candidates[0][1]})")
+                else:
+                    # 妥当な候補が見つからない場合はデフォルト値を使用
+                    logger.warning(f"妥当な金額候補が見つからないため、デフォルト値を使用します: {default_amount}円")
+                    selected_amount = int(default_amount)
+            
+            # 金額が小さすぎる場合（3桁未満）もチェック
+            if len(str(selected_amount)) < 3 and selected_amount < 100:
+                logger.warning(f"選択された金額が小さすぎるため、再検証します: {selected_amount}")
+                
+                # 3桁の金額を探す
+                three_digit_candidates = [c for c in all_candidates if 100 <= c[0] < 1000]
+                if three_digit_candidates:
+                    selected_amount = three_digit_candidates[0][0]
+                    logger.info(f"3桁の金額候補を採用: {selected_amount}円")
+                else:
+                    # 3桁の候補がない場合はデフォルト値を使用
+                    logger.warning(f"3桁の金額候補が見つからないため、デフォルト値を使用します: {default_amount}円")
+                    selected_amount = int(default_amount)
+            
+            logger.info(f"選択された金額: {selected_amount}円, スコア: {selected_score}, 優先度: {selected_priority}")
+            logger.info(f"抽出行: {selected_line}")
+            
+            # 金額が見つかった場合
+            if selected_amount:
+                amount = str(selected_amount)
+                logger.info(f"金額抽出成功: {amount}円 (優先度: {selected_priority}, パターン: {selected_pattern})")
+                logger.info(f"抽出元: {selected_line}")
+                
+                # すべての候補をログに記録
+                logger.info(f"すべての金額候補: {all_candidates}")
+            else:
+                logger.warning("金額を抽出できませんでした")
+        else:
+            selected_amount = None
+            selected_priority = 0
+            selected_pattern = ""
+            selected_line = ""
+            logger.warning("金額候補が見つかりませんでした")
+        
+        # 金額が0または空の場合はデフォルト値を使用
+        if not amount or amount == '0':
+            amount = default_amount
+            logger.info(f"デフォルト金額を使用: {amount}円")
+        
+        # 最終チェック - 受給者番号らしき数値パターンをチェック
+        try:
+            amount_value = int(amount)
+            if 9 <= len(str(amount_value)) <= 10 and str(amount_value).startswith(('3', '4', '5')):
+                logger.warning(f"最終チェック: 金額が受給者番号のパターンです: {amount} → {default_amount}")
+                amount = default_amount
+        except (ValueError, TypeError):
+            pass
+    
+        # 最終チェック - 必ず文字列型で返す
+        if customer is None:
+            customer = '不明'
+        else:
+            customer = str(customer)
+            
+        if amount is None:
+            amount = default_amount
+        else:
+            amount = str(amount)
+            
+        # 名前付きタプルを返すことで順序に依存しない実装に
+        return ExtractionResult(customer=customer, amount=amount)
+
+
+def create_paypal_payment_link(amount, customer):
+    """
+    PayPal決済リンクを生成する
+    
+    Args:
+        amount: 金額
+        customer: 客先名
+        
+    Returns:
+        PayPal決済リンクのURL
+    """
+    config = get_config()
+    client_id = config.get('paypal_client_id', '')
+    client_secret = config.get('paypal_client_secret', '')
+    
+    if not client_id or not client_secret:
+        logger.warning("PayPal Client IDまたはClient Secretが設定されていません")
+        return ''
+    
+    # 金額のフォーマットを整理
+    try:
+        # 金額から数字とドット以外を除去
+        amount_str = ''.join(filter(lambda x: x.isdigit() or x == '.', str(amount)))
+        # 空の場合や変換できない場合はデフォルト値を使用
+        if not amount_str:
+            logger.warning(f"金額が空または無効です: '{amount}'")
+            amount_value = 0
+        else:
+            # 数値に変換
+            amount_value = float(amount_str)
+            
+            # 金額が異常に小さい場合は桁数の間違いの可能性がある
+            if 0 < amount_value < 100 and len(amount_str) <= 2:
+                # 可能性として1000円単位の入力ミスの可能性
+                logger.warning(f"金額が異常に小さいため、1000倍して調整します: {amount_value} → {amount_value * 1000}")
+                amount_value *= 1000
+            
+            # 日本円の場合は整数に丸める（小数点以下は不要）
+            if config.get('currency_code', 'JPY') == 'JPY':
+                amount_value = int(amount_value)
+                formatted_amount = str(amount_value)
+            else:
+                # 小数点以下2桁にフォーマット
+                formatted_amount = "{:.2f}".format(amount_value)
+                
+        logger.info(f"金額フォーマット: 元の値='{amount}', 変換後='{formatted_amount}'")
+    except (ValueError, TypeError) as e:
+        logger.warning(f"金額のフォーマットエラー: {amount}, エラー: {str(e)}")
+        # デフォルト値を設定
+        formatted_amount = "1000"
+    
+    # 金額が0の場合はデフォルト値を使用
+    if formatted_amount == "0" or formatted_amount == "0.00":
+        logger.warning("金額が0のため、デフォルト値の1000円を使用します")
+        formatted_amount = "1000"
+    
+    # PayPalモードに基づいてベースURLを設定
+    paypal_mode = config.get('paypal_mode', 'sandbox')
+    api_base = "https://api-m.sandbox.paypal.com" if paypal_mode == "sandbox" else "https://api-m.paypal.com"
+    
+    # 顧客名が空の場合のデフォルト値
+    customer_name = customer if customer and customer != '不明' else "請求先"
+    
+    # 顧客名に特殊文字が含まれている場合はエスケープ
+    customer_name = urllib.parse.quote(customer_name)
+    
+    # 通貨コード
+    currency_code = config.get('currency_code', 'JPY')
+    
+    # リトライ回数
+    max_retries = 2
+    retry_count = 0
+    
+    while retry_count <= max_retries:
+        try:
+            # get_paypal_access_token関数を使用してアクセストークンを取得
+            access_token = get_paypal_access_token()
+            
+            if not access_token:
+                logger.error("PayPalアクセストークンの取得に失敗しました")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    logger.info(f"PayPalトークン取得リトライ: {retry_count}/{max_retries}")
+                    time.sleep(1)  # 1秒待機してリトライ
+                    continue
+                else:
+                    # リトライ回数超過、フォールバック方式を使用
+                    raise Exception("アクセストークンの取得に失敗しました")
+            
+            logger.info("PayPalアクセストークン取得成功")
+            
+            # Orders APIを使用して決済リンクを生成
+            orders_url = f"{api_base}/v2/checkout/orders"
+            orders_headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {access_token}"
+            }
+            
+            # 注文説明（特殊文字を除去）
+            cleaned_customer = urllib.parse.unquote(customer_name)
+            # 特殊文字や制御文字を除去
+            cleaned_customer = re.sub(r'[^\w\s\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]', '', cleaned_customer)
+            description = f"{cleaned_customer}様宛請求書"
+            
+            # 注文データ
+            payload = {
+                "intent": "CAPTURE",
+                "purchase_units": [
+                    {
+                        "amount": {
+                            "currency_code": currency_code,
+                            "value": formatted_amount
+                        },
+                        "description": description[:127]
+                    }
+                ],
+                "application_context": {
+                    "return_url": request.url_root.rstrip('/') + url_for('payment_success'),
+                    "cancel_url": request.url_root.rstrip('/') + url_for('payment_cancel'),
+                    "brand_name": "PDF PayPal System",
+                    "locale": "ja-JP",
+                    "landing_page": "BILLING",
+                    "shipping_preference": "NO_SHIPPING",
+                    "user_action": "PAY_NOW"
+                }
+            }
+            
+            # APIリクエスト
+            logger.info(f"PayPal注文作成開始: {orders_url}")
+            logger.debug(f"PayPal注文リクエスト: {payload}")
+            
+            orders_response = requests.post(
+                orders_url, 
+                headers=orders_headers, 
+                json=payload,
+                timeout=15  # タイムアウト設定
+            )
+            
+            # レスポンスコードをチェック
+            if orders_response.status_code != 201:
+                logger.error(f"PayPal注文作成エラー: ステータス={orders_response.status_code}, レスポンス={orders_response.text}")
+                
+                # エラーレスポンスの詳細をログに記録
+                try:
+                    error_details = orders_response.json()
+                    logger.error(f"PayPalエラー詳細: {json.dumps(error_details, indent=2)}")
+                    
+                    # 金額関連のエラーの場合、金額を調整して再試行
+                    if 'details' in error_details:
+                        for detail in error_details.get('details', []):
+                            if 'issue' in detail and ('amount' in detail.get('issue', '').lower() or 'value' in detail.get('issue', '').lower()):
+                                logger.warning("金額関連のエラーを検出しました。金額を調整します。")
+                                # 金額を調整（例: 小数点以下を削除）
+                                if '.' in formatted_amount:
+                                    formatted_amount = formatted_amount.split('.')[0]
+                                    logger.info(f"金額を調整しました: {formatted_amount}")
+                                    # 金額を調整したので、このイテレーションをスキップして再試行
+                                    retry_count += 1
+                                    if retry_count <= max_retries:
+                                        logger.info(f"金額調整後にPayPal注文作成リトライ: {retry_count}/{max_retries}")
+                                        time.sleep(1)  # 1秒待機してリトライ
+                                        continue
+                except Exception as json_err:
+                    logger.error(f"PayPalエラーレスポンスのJSONパースエラー: {str(json_err)}")
+                
+                retry_count += 1
+                if retry_count <= max_retries:
+                    logger.info(f"PayPal注文作成リトライ: {retry_count}/{max_retries}")
+                    time.sleep(1)  # 1秒待機してリトライ
+                    continue
+                else:
+                    # リトライ回数超過、フォールバック方式を使用
+                    raise Exception(f"注文作成失敗: {orders_response.status_code}")
+            
+            try:
+                response_data = orders_response.json()
+                logger.info(f"PayPal注文作成成功: ID={response_data.get('id', '不明')}")
+                
+                # レスポンス全体をデバッグログに記録
+                logger.debug(f"PayPal応答全体: {json.dumps(response_data, indent=2)}")
+                
+                # 承認リンクを取得
+                approval_link = None
+                if "links" in response_data:
+                    # 全てのリンク情報をログに記録（デバッグ用）
+                    logger.debug(f"PayPal応答のリンク情報: {json.dumps(response_data['links'], indent=2)}")
+                    
+                    # まず'approve'リンクを探す
+                    for link in response_data["links"]:
+                        if link.get("rel") == "approve":
+                            approval_link = link.get("href")
+                            logger.info(f"'approve'リンクが見つかりました: {approval_link}")
+                            break
+                    
+                    # 'approve'が見つからない場合は'payer-action'を探す
+                    if not approval_link:
+                        for link in response_data["links"]:
+                            if link.get("rel") == "payer-action":
+                                approval_link = link.get("href")
+                                logger.info(f"'payer-action'リンクが見つかりました: {approval_link}")
+                                break
+                    
+                    # それでも見つからない場合は'checkout'または'self'以外の最初のリンクを使用
+                    if not approval_link:
+                        for link in response_data["links"]:
+                            if link.get("rel") == "checkout":
+                                approval_link = link.get("href")
+                                logger.info(f"'checkout'リンクが見つかりました: {approval_link}")
+                                break
+                            
+                    # 最後の手段として'self'以外の任意のリンクを使用
+                    if not approval_link:
+                        for link in response_data["links"]:
+                            if link.get("rel") != "self":
+                                approval_link = link.get("href")
+                                logger.info(f"代替リンクが見つかりました: {approval_link} (rel: {link.get('rel')})")
+                                break
+            except json.JSONDecodeError as json_err:
+                logger.error(f"PayPal応答のJSONパースエラー: {str(json_err)}")
+                # 応答テキストをそのまま記録
+                logger.error(f"PayPal応答テキスト: {orders_response.text}")
+                raise Exception(f"PayPal応答のJSONパースエラー: {str(json_err)}")
+            
+            if approval_link:
+                logger.info(f"PayPal決済リンク生成成功: {approval_link}")
+                return approval_link
+            else:
+                logger.warning(f"PayPal決済リンクが見つかりません: {json.dumps(response_data, indent=2)}")
+                # リンクが見つからない場合はフォールバック
+                raise Exception("決済リンクが見つかりません")
+                
+        except Exception as e:
+            logger.error(f"PayPal決済リンク生成エラー: {str(e)}")
+            retry_count += 1
+            if retry_count <= max_retries:
+                logger.info(f"PayPal決済リンク生成リトライ: {retry_count}/{max_retries}")
+                time.sleep(1)  # 1秒待機してリトライ
+            else:
+                # リトライ回数超過、フォールバック方式を使用
+                logger.info("フォールバック方式で決済リンクを生成します")
+                break
+    
+    # APIでの生成に失敗した場合のフォールバック
+    try:
+        # 従来の方法でリンクを生成
+        base_url = "https://www.sandbox.paypal.com" if paypal_mode == "sandbox" else "https://www.paypal.com"
+        
+        # PayPalビジネスメールアドレスを取得
+        paypal_email = config.get('paypal_email', '')
+        
+        # メールアドレスが設定されていない場合はクライアントIDを使用
+        business_id = paypal_email if paypal_email else client_id
+        
+        # 顧客名をクリーニング
+        cleaned_customer = re.sub(r'[^\w\s\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]', '', customer_name)
+        
+        # 決済リンクを生成
+        payment_link = f"{base_url}/cgi-bin/webscr?cmd=_xclick&business={urllib.parse.quote(business_id)}&item_name={urllib.parse.quote(cleaned_customer + '様宛請求書')}&amount={formatted_amount}&currency_code={currency_code}&charset=UTF-8"
+        logger.info(f"フォールバック決済リンク生成: {payment_link}")
+        return payment_link
+    except Exception as e:
+        logger.error(f"フォールバック決済リンク生成エラー: {str(e)}")
+        return ''
+
+# ファイルダウンロード関数
+def download_file(filename):
+    """
+    結果ファイルをダウンロードする
+    
+    Args:
+        filename: ダウンロードするファイル名
+    """
+    results_folder = current_app.config['RESULTS_FOLDER']
+    return send_from_directory(results_folder, filename, as_attachment=True)
+
+# PayPal決済成功ページ
+def payment_success():
+    """
+    PayPal決済成功時のリダイレクト先
+    """
+    return render_template('payment_success.html')
+
+# PayPal決済キャンセルページ
+def payment_cancel():
+    """
+    PayPal決済キャンセル時のリダイレクト先
+    """
+    return render_template('payment_cancel.html')
+
+# 設定ページ
+def settings():
+    """
+    アプリケーションの設定ページを表示する
+    """
+    config = get_config()
+    
+    # PayPalの接続状態を確認
+    paypal_status = False
+    client_id = config.get('paypal_client_id', '')
+    client_secret = config.get('paypal_client_secret', '')
+    
+    if client_id and client_secret:
+        try:
+            # APIベースURLの設定
+            mode = config.get('paypal_mode', 'sandbox')
+            api_base = "https://api-m.sandbox.paypal.com" if mode == "sandbox" else "https://api-m.paypal.com"
+            
+            # アクセストークン取得リクエスト（タイムアウトを設定して短時間で完了するようにする）
+            auth_url = f"{api_base}/v1/oauth2/token"
+            auth_response = requests.post(
+                auth_url,
+                auth=(client_id, client_secret),
+                data={'grant_type': 'client_credentials'},
+                headers={'Accept': 'application/json', 'Accept-Language': 'en_US'},
+                timeout=3  # 3秒のタイムアウトを設定
+            )
+            
+            # レスポンス確認
+            paypal_status = auth_response.status_code == 200
+        except Exception as e:
+            logger.warning(f"設定画面表示時のPayPal接続確認でエラー: {str(e)}")
+            paypal_status = False
+    
+    return render_template('settings.html', config=config, ai_ocr_available=AI_OCR_AVAILABLE, paypal_status=paypal_status)
+
+# 設定保存処理
+def save_settings():
+    """
+    アプリケーションの設定を保存する
+    """
+    try:
+        config = get_config()
+        
+        # フォームから値を取得
+        config['paypal_client_id'] = request.form.get('paypal_client_id', '')
+        config['paypal_client_secret'] = request.form.get('paypal_client_secret', '')
+        config['paypal_mode'] = request.form.get('paypal_mode', 'sandbox')
+        
+        # AI OCRの設定
+        config['use_ai_ocr'] = request.form.get('use_ai_ocr') == 'on'
+        
+        # 設定を保存
+        save_config(config)
+        flash('設定を保存しました。', 'success')
+    except Exception as e:
+        logger.error(f"設定保存エラー: {str(e)}")
+        flash(f"設定の保存中にエラーが発生しました: {str(e)}", 'danger')
+    
+    return redirect(url_for('settings'))
+
+# PayPal接続テスト
+def test_connection():
+    """
+    PayPal APIへの接続をテストする
+    """
+    try:
+        # JSONデータまたはフォームデータから値を取得
+        if request.is_json:
+            data = request.get_json()
+            client_id = data.get('paypal_client_id', '')
+            client_secret = data.get('paypal_client_secret', '')
+            mode = data.get('paypal_mode', 'sandbox')
+        else:
+            # フォームからの送信の場合
+            client_id = request.form.get('paypal_client_id', '')
+            client_secret = request.form.get('paypal_client_secret', '')
+            mode = request.form.get('paypal_mode', 'sandbox')
+        
+        if not client_id or not client_secret:
+            return jsonify({'success': False, 'message': 'Client IDとClient Secretを入力してください。'})
+        
+        # APIベースURLの設定
+        api_base = "https://api-m.sandbox.paypal.com" if mode == "sandbox" else "https://api-m.paypal.com"
+        
+        # アクセストークン取得リクエスト
+        auth_url = f"{api_base}/v1/oauth2/token"
+        auth_response = requests.post(
+            auth_url,
+            auth=(client_id, client_secret),
+            data={'grant_type': 'client_credentials'},
+            headers={'Accept': 'application/json', 'Accept-Language': 'en_US'}
+        )
+        
+        # レスポンス確認
+        if auth_response.status_code == 200:
+            return jsonify({'success': True, 'message': '接続テストに成功しました。'})
+        else:
+            error_data = auth_response.json()
+            error_message = error_data.get('error_description', '不明なエラー')
+            return jsonify({'success': False, 'message': f"接続エラー: {error_message}"})
+            
+    except Exception as e:
+        logger.error(f"PayPal接続テストエラー: {str(e)}")
+        return jsonify({'success': False, 'message': f"エラー: {str(e)}"})
+
+# 設定エクスポート
+def export_settings():
+    """
+    アプリケーションの設定をJSONファイルとしてエクスポートする
+    """
+    try:
+        config = get_config()
+        # セキュリティ上の理由から、クライアントシークレットはマスクする
+        export_config = config.copy()
+        if 'paypal_client_secret' in export_config:
+            export_config['paypal_client_secret'] = '********'
+        
+        # JSONファイルを作成してダウンロードさせる
+        response = jsonify(export_config)
+        response.headers["Content-Disposition"] = "attachment; filename=pdf_paypal_settings.json"
+        return response
+    except Exception as e:
+        logger.error(f"設定エクスポートエラー: {str(e)}")
+        flash(f"設定のエクスポート中にエラーが発生しました: {str(e)}", 'danger')
+        return redirect(url_for('settings'))
+
+# 設定インポート
+def import_settings():
+    """
+    JSONファイルからアプリケーションの設定をインポートする
+    """
+    if 'file' not in request.files:
+        flash('ファイルが選択されていません。', 'danger')
+        return redirect(url_for('settings'))
+    
+    file = request.files['file']
+    if file.filename == '':
+        flash('ファイルが選択されていません。', 'danger')
+        return redirect(url_for('settings'))
+    
+    try:
+        # JSONファイルを読み込み
+        import_data = json.load(file)
+        
+        # 現在の設定を取得
+        current_config = get_config()
+        
+        # 必要な設定のみを更新
+        for key in ['paypal_client_id', 'paypal_mode', 'use_ai_ocr']:
+            if key in import_data:
+                current_config[key] = import_data[key]
+        
+        # client_secretはマスクされていない場合のみ更新
+        if 'paypal_client_secret' in import_data and import_data['paypal_client_secret'] != '********':
+            current_config['paypal_client_secret'] = import_data['paypal_client_secret']
+        
+        # 設定を保存
+        save_config(current_config)
+        flash('設定をインポートしました。', 'success')
+    except json.JSONDecodeError:
+        flash('無効なJSONファイルです。', 'danger')
+    except Exception as e:
+        logger.error(f"設定インポートエラー: {str(e)}")
+        flash(f"設定のインポート中にエラーが発生しました: {str(e)}", 'danger')
+    
+    return redirect(url_for('settings'))
+
+# 履歴一覧ページ
+def history():
+    history_data = []
+    try:
+        results_folder = app.config['RESULTS_FOLDER']
+        files = [f for f in os.listdir(results_folder) if f.startswith('payment_links_') and f.endswith('.json')]
+        files.sort(reverse=True)
+        
+        # 各ファイルの内容を読み込み、顧客名情報を取得
+        for file in files:
+            file_path = os.path.join(results_folder, file)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # 日付をファイル名から抽出
+                    date_str = file.replace('payment_links_', '').replace('.json', '')
+                    # YYYYMMDD_HHMMSS形式を読みやすい形式に変換
+                    try:
+                        date_obj = datetime.strptime(date_str, "%Y%m%d_%H%M%S")
+                        formatted_date = date_obj.strftime("%Y年%m月%d日 %H:%M")
+                    except:
+                        formatted_date = date_str
+                    
+                    # 顧客名を取得
+                    customers = []
+                    for item in data:
+                        # データが辞書型か確認
+                        if isinstance(item, dict):
+                            customer = item.get('customer') or item.get('顧客名')
+                            if customer and customer not in customers:
+                                customers.append(customer)
+                    
+                    # 結果を追加
+                    history_data.append({
+                        'filename': file,
+                        'date': formatted_date,
+                        'customers': customers,
+                        'count': len(data)
+                    })
+            except Exception as e:
+                logger.error(f"履歴ファイル読み込みエラー ({file}): {str(e)}")
+                # エラーがあってもファイル名だけは表示
+                history_data.append({
+                    'filename': file,
+                    'date': file.replace('payment_links_', '').replace('.json', ''),
+                    'customers': [],
+                    'count': 0
+                })
+    except Exception as e:
+        logger.error(f"履歴ファイル一覧取得エラー: {str(e)}")
+    return render_template('history.html', history_data=history_data)
+
+# 履歴削除機能
+def delete_history():
+    """
+    履歴ファイルを削除する関数
+    二重確認のため、確認コードを検証する
+    PayPal APIを使用して注文情報も削除する
+    """
+    if request.method == 'POST':
+        # 単一ファイル削除の場合
+        if 'filename' in request.form:
+            filename = request.form.get('filename')
+            confirmation_code = request.form.get('confirmation_code')
+            expected_code = request.form.get('expected_code')
+            
+            # 確認コードの検証
+            if not filename or not confirmation_code or confirmation_code != expected_code:
+                flash('確認コードが一致しないため、削除できませんでした。', 'danger')
+                return redirect(url_for('history'))
+            
+            # ファイル名の検証（セキュリティ対策）
+            if not filename.startswith('payment_links_') or not filename.endswith('.json'):
+                flash('無効なファイル名です。', 'danger')
+                return redirect(url_for('history'))
+            
+            # ファイルの存在確認
+            results_folder = current_app.config['RESULTS_FOLDER']
+            file_path = os.path.join(results_folder, filename)
+            
+            if not os.path.exists(file_path):
+                flash('指定されたファイルが見つかりません。', 'danger')
+                return redirect(url_for('history'))
+                
+            # 単一ファイルを処理
+            selected_files = [filename]
+        else:
+            # 複数ファイル選択の場合
+            selected_files = request.form.getlist('selected_files')
+            if not selected_files:
+                flash('ファイルが選択されていません', 'warning')
+                return redirect(url_for('history'))
+        
+        deleted_count = 0
+        paypal_deleted_count = 0
+        error_count = 0
+        
+        for filename in selected_files:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'results', filename)
+            if os.path.exists(file_path):
+                try:
+                    # PayPal注文IDを抽出して削除を試みる
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            # 決済リンクからオーダーIDを抽出
+                            payment_links = re.findall(r'https://www\.paypal\.com/cgi-bin/webscr\?cmd=_express-checkout&token=([^"&]+)', content)
+                            if not payment_links:
+                                # 別形式のリンクを試す
+                                payment_links = re.findall(r'https://www\.paypal\.com/checkoutnow\?token=([^"&]+)', content)
+                            
+                            for token in payment_links:
+                                try:
+                                    # PayPalのアクセストークンを取得
+                                    access_token = get_paypal_access_token()
+                                    if access_token:
+                                        # まず注文の状態を確認
+                                        api_base = get_api_base()
+                                        headers = {
+                                            'Content-Type': 'application/json',
+                                            'Authorization': f'Bearer {access_token}'
+                                        }
+                                        
+                                        # GETリクエストで注文情報を取得
+                                        get_url = f"{api_base}/v2/checkout/orders/{token}"
+                                        get_response = requests.get(get_url, headers=headers)
+                                        
+                                        if get_response.status_code == 200:
+                                            order_data = get_response.json()
+                                            order_status = order_data.get('status', '')
+                                            
+                                            # 注文が作成済み、承認済み、または保存済みの場合のみキャンセル処理
+                                            if order_status in ['CREATED', 'APPROVED', 'SAVED']:
+                                                try:
+                                                    # 正しいPATCHリクエストを送信して注文をキャンセル状態に更新
+                                                    patch_url = f"{api_base}/v2/checkout/orders/{token}"
+                                                    patch_data = [
+                                                        {
+                                                            "op": "add",
+                                                            "path": "/application_context",
+                                                            "value": {
+                                                                "cancel_url": request.url_root
+                                                            }
+                                                        }
+                                                    ]
+                                                    
+                                                    # PATCHリクエストは使用せず、直接キャンセルエンドポイントを使用
+                                                    logger.info(f"PayPal注文キャンセルを実行します: {token}")
+                                                    # 注文をキャンセルするためのエンドポイント
+                                                    cancel_url = f"{api_base}/v2/checkout/orders/{token}/cancel"
+                                                    cancel_response = requests.post(cancel_url, headers=headers)
+                                                    
+                                                    if cancel_response.status_code in [200, 204]:
+                                                        paypal_deleted_count += 1
+                                                        logger.info(f"PayPal注文キャンセル成功: {token}")
+                                                    else:
+                                                        logger.error(f"PayPal注文キャンセルエラー: {token}, ステータス: {cancel_response.status_code}, レスポンス: {cancel_response.text}")
+                                                except Exception as e:
+                                                    logger.error(f"PayPal注文キャンセル処理中のエラー: {str(e)}")
+                                                
+                                                # この部分は上のtryブロック内で処理済みなので削除
+                                            else:
+                                                logger.info(f"PayPal注文のステータスが {order_status} のため、キャンセル処理をスキップしました: {token}")
+                                        else:
+                                            logger.error(f"PayPal注文情報取得エラー: {token}, ステータス: {get_response.status_code}, レスポンス: {get_response.text}")
+                                except Exception as e:
+                                    logger.error(f"PayPal API呼び出しエラー: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"ファイル読み込みエラー: {str(e)}")
+                    
+                    # ローカルファイルを削除
+                    os.remove(file_path)
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error(f"ファイル削除エラー: {str(e)}")
+                    error_count += 1
+        
+        message = f"{deleted_count}件の履歴を削除しました。"
+        if paypal_deleted_count > 0:
+            message += f" {paypal_deleted_count}件のPayPal注文もキャンセルしました。"
+        if error_count > 0:
+            message += f" {error_count}件のエラーが発生しました。"
+            
+        flash(message, 'success' if error_count == 0 else 'warning')
+        
+    return redirect(url_for('history'))
+
+# PayPal決済状態の確認
+def get_paypal_access_token():
+    """
+    PayPal APIのアクセストークンを取得する
+    
+    Returns:
+        文字列: PayPalのアクセストークン、取得失敗時はNone
+    """
+    try:
+        # 設定から認証情報を取得
+        config = get_config()
+        client_id = config.get('paypal_client_id', '')
+        client_secret = config.get('paypal_client_secret', '')
+        
+        if not client_id or not client_secret:
+            logger.warning("PayPal Client IDまたはClient Secretが設定されていません")
+            return None
+        
+        # APIベースURLを取得
+        api_base = get_api_base()
+        
+        # アクセストークンを取得
+        token_url = f"{api_base}/v1/oauth2/token"
+        token_headers = {
+            "Accept": "application/json",
+            "Accept-Language": "en_US"
+        }
+        token_data = {"grant_type": "client_credentials"}
+        
+        logger.info(f"PayPalアクセストークン取得開始: {token_url}")
+        token_response = requests.post(
+            token_url,
+            auth=(client_id, client_secret),
+            headers=token_headers,
+            data=token_data,
+            timeout=10  # タイムアウト設定
+        )
+        
+        # レスポンスコードをチェック
+        if token_response.status_code != 200:
+            logger.error(f"PayPalトークン取得エラー: ステータス={token_response.status_code}, レスポンス={token_response.text}")
+            return None
+        
+        token_data = token_response.json()
+        if "access_token" not in token_data:
+            logger.error(f"PayPalトークンレスポンスにaccess_tokenがありません: {token_data}")
+            return None
+            
+        access_token = token_data["access_token"]
+        logger.info("PayPalアクセストークン取得成功")
+        return access_token
+        
+    except Exception as e:
+        logger.error(f"PayPalアクセストークン取得エラー: {str(e)}")
+        return None
+
+def get_api_base():
+    """
+    PayPal APIのベースURLを取得する
+    
+    Returns:
+        文字列: PayPal APIのベースURL
+    """
+    # 設定からPayPalモードを取得
+    config = get_config()
+    paypal_mode = config.get('paypal_mode', 'sandbox')
+    
+    # モードに応じたベースURLを返す
+    return "https://api-m.sandbox.paypal.com" if paypal_mode == "sandbox" else "https://api-m.paypal.com"
+
+
+def check_payment_status(order_id):
+    """
+    PayPal APIを使用して決済状態を確認する
+    
+    Args:
+        order_id: PayPalのオーダーID
+        
+    Returns:
+        状態文字列: 'COMPLETED', 'PENDING', 'FAILED', 'UNKNOWN'のいずれか
+    """
+    try:
+        if not order_id or len(order_id) < 5:
+            return "UNKNOWN"
+            
+        # アクセストークン取得
+        access_token = get_paypal_access_token()
+        if not access_token:
+            logger.error("PayPalアクセストークン取得失敗")
+            return "UNKNOWN"
+        
+        # オーダー情報取得
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}"
+        }
+        
+        order_url = f"{get_api_base()}/v2/checkout/orders/{order_id}"
+        response = requests.get(order_url, headers=headers)
+        
+        if response.status_code == 200:
+            order_data = response.json()
+            status = order_data.get("status", "")
+            
+            # 状態に応じて返却
+            if status == "COMPLETED":
+                return "COMPLETED"  # 支払い完了
+            elif status == "APPROVED":
+                return "PENDING"    # 承認済み（キャプチャ前）
+            elif status == "CREATED":
+                return "PENDING"    # 作成済み（支払い前）
+            elif status == "VOIDED" or status == "PAYER_ACTION_REQUIRED":
+                return "FAILED"     # 無効化または支払い操作必要
+            else:
+                return status        # その他の状態はそのまま返す
+        else:
+            logger.error(f"PayPal API エラー: {response.status_code}, {response.text}")
+            return "UNKNOWN"
+    except Exception as e:
+        logger.error(f"決済状態確認エラー: {str(e)}")
+        return "UNKNOWN"
+
+# 履歴詳細ページ
+def history_detail(filename):
+    results = []
+    try:
+        results_folder = app.config['RESULTS_FOLDER']
+        file_path = os.path.join(results_folder, filename)
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+                
+            # 各決済リンクの状態を確認
+            for i, item in enumerate(results):
+                # データが辞書型か確認
+                if not isinstance(item, dict):
+                    logger.warning(f"履歴データの項目 {i} は辞書型ではありません: {type(item)}")
+                    continue
+                    
+                payment_link = item.get('payment_link') or item.get('決済リンク', '')
+                # PayPalのURLからオーダーIDを抽出
+                order_id = None
+                if payment_link and 'token=' in payment_link:
+                    order_id = payment_link.split('token=')[-1].split('&')[0]
+                
+                # 決済状態を確認して追加
+                if order_id:
+                    status = check_payment_status(order_id)
+                    item['payment_status'] = status
+                else:
+                    item['payment_status'] = "UNKNOWN"
+                    
+    except Exception as e:
+        logger.error(f"履歴詳細読み込みエラー: {str(e)}")
+    return render_template('history_detail.html', filename=filename, results=results)
+
+# 環境変数からポート番号を取得（クラウド環境対応）
+def get_port():
+    port = os.environ.get("PORT", 8080)
+    return int(port)
+
+# 設定ファイルが存在しない場合に初期設定を作成
+def initialize_config():
+    config = get_config()
+    if not config:
+        config = {
+            'paypal_client_id': os.environ.get("PAYPAL_CLIENT_ID", ""),
+            'paypal_client_secret': os.environ.get("PAYPAL_CLIENT_SECRET", ""),
+            'paypal_mode': os.environ.get("PAYPAL_MODE", "sandbox"),
+            'use_ai_ocr': config.get('use_ai_ocr', False)
+        }
+        save_config(config)
+    return config
+
+
+
+
+# ポート番号を取得する関数
+def get_port():
+    """環境変数からポート番号を取得する"""
+    port = os.environ.get('PORT')
+    if port:
+        try:
+            return int(port)
+        except ValueError:
+            logger.warning(f"無効なポート番号: {port}")
+    return 8080  # デフォルトポート
+
+# アプリ実行
+if __name__ == '__main__':
+    # 環境変数の表示（デバッグ用）
+    logger.info("=== 環境変数 ===")
+    for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR']:
+        logger.info(f"{key}: {os.environ.get(key, 'Not set')}")
+    
+    # アプリ初期化
+    app = create_app()
+    port = get_port()
+    
+    # Renderなどのクラウド環境では、debug=Falseを使用
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    logger.info(f"アプリ起動: host=0.0.0.0, port={port}, debug={debug_mode}")
+    
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)

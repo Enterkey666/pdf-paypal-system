@@ -6,26 +6,32 @@ import io
 import re
 import json
 import requests
+import logging
 from typing import Dict, List, Optional, Tuple, Any
+from extractors import ExtractionResult
 from PIL import Image
 import pdfplumber
 import numpy as np
 
+# ロガーの設定
+logger = logging.getLogger(__name__)
+
 # Google Cloud Vision APIを使用する場合（APIキーが必要）
 try:
     from google.cloud import vision
-    from google.cloud.vision_v1 import types
+    from google.oauth2 import service_account
     GOOGLE_VISION_AVAILABLE = True
 except ImportError:
     GOOGLE_VISION_AVAILABLE = False
+    logger.warning("Google Cloud Vision APIが利用できません。必要なライブラリをインストールしてください: pip install google-cloud-vision")
 
-# Azure Form Recognizerを使用する場合（APIキーが必要）
 try:
     from azure.ai.formrecognizer import DocumentAnalysisClient
     from azure.core.credentials import AzureKeyCredential
     AZURE_FORM_RECOGNIZER_AVAILABLE = True
 except ImportError:
     AZURE_FORM_RECOGNIZER_AVAILABLE = False
+    logger.warning("Azure Form Recognizerが利用できません。必要なライブラリをインストールしてください: pip install azure-ai-formrecognizer")
 
 # Tesseractを使用する場合（ローカル実行、APIキー不要）
 try:
@@ -33,10 +39,10 @@ try:
     # Tesseractが実際にインストールされているか確認
     pytesseract.get_tesseract_version()
     TESSERACT_AVAILABLE = True
-    print("Tesseract OCRが利用可能です。バージョン:", pytesseract.get_tesseract_version())
+    logger.info(f"Tesseract OCRが利用可能です。バージョン: {pytesseract.get_tesseract_version()}")
 except (ImportError, pytesseract.TesseractNotFoundError):
     TESSERACT_AVAILABLE = False
-    print("Tesseract OCRが利用できません。従来の抽出方法を使用します。")
+    logger.warning("Tesseract OCRが利用できません。従来の抽出方法を使用します。")
 
 
 class AIOCR:
@@ -50,25 +56,63 @@ class AIOCR:
         """
         self.config = config or {}
         self.ocr_method = self.config.get('ocr_method', 'tesseract')
-        self.api_key = self.config.get('api_key', '')
-        self.endpoint = self.config.get('endpoint', '')
+        self.api_key = self.config.get('ocr_api_key', '')
+        self.endpoint = self.config.get('ocr_endpoint', '')
         
         # OCRエンジンの初期化
         if self.ocr_method == 'google_vision' and GOOGLE_VISION_AVAILABLE:
-            self.client = vision.ImageAnnotatorClient()
+            try:
+                if self.api_key:
+                    # APIキーから認証情報を作成（JSONキーの内容をAPIキーとして使用）
+                    try:
+                        # APIキーがJSON形式の場合
+                        import json
+                        credentials_info = json.loads(self.api_key)
+                        credentials = service_account.Credentials.from_service_account_info(credentials_info)
+                        self.client = vision.ImageAnnotatorClient(credentials=credentials)
+                        logger.info("Google Cloud Vision API: JSONキーから認証情報を作成しました")
+                    except json.JSONDecodeError:
+                        # APIキーがJSONでない場合、環境変数を使用
+                        import os
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = self.api_key
+                        self.client = vision.ImageAnnotatorClient()
+                        logger.info("Google Cloud Vision API: 環境変数から認証情報を作成しました")
+                else:
+                    # APIキーがない場合、デフォルトの認証情報を使用
+                    self.client = vision.ImageAnnotatorClient()
+                    logger.info("Google Cloud Vision API: デフォルトの認証情報を使用します")
+            except Exception as e:
+                logger.error(f"Google Cloud Vision APIの初期化エラー: {str(e)}")
+                self.ocr_method = 'tesseract'
+                
         elif self.ocr_method == 'azure_form_recognizer' and AZURE_FORM_RECOGNIZER_AVAILABLE:
-            self.client = DocumentAnalysisClient(
-                endpoint=self.endpoint, 
-                credential=AzureKeyCredential(self.api_key)
-            )
-    
-    def extract_from_pdf(self, pdf_path: str) -> Tuple[Optional[int], Optional[str]]:
+            try:
+                if not self.api_key:
+                    logger.warning("Azure Form RecognizerのAPIキーが設定されていません")
+                    self.ocr_method = 'tesseract'
+                    return
+                    
+                if not self.endpoint:
+                    # エンドポイントが指定されていない場合、デフォルトのエンドポイントを使用
+                    self.endpoint = "https://api.cognitive.microsofttranslator.com/"
+                    logger.warning(f"Azure Form Recognizerのエンドポイントが指定されていないため、デフォルト値を使用します: {self.endpoint}")
+                    
+                self.client = DocumentAnalysisClient(
+                    endpoint=self.endpoint, 
+                    credential=AzureKeyCredential(self.api_key)
+                )
+                logger.info("Azure Form Recognizer: クライアントを初期化しました")
+            except Exception as e:
+                logger.error(f"Azure Form Recognizerの初期化エラー: {str(e)}")
+                self.ocr_method = 'tesseract'
+                
+    def extract_from_pdf(self, pdf_path: str) -> ExtractionResult:
         """
-        PDFから金額と顧客名を抽出
+        PDFから顧客名と金額を抽出
         Args:
             pdf_path: PDFファイルのパス
         Returns:
-            (金額, 顧客名)のタプル
+            (顧客名, 金額)のタプル
         """
         # OCR方式に応じて処理
         if self.ocr_method == 'google_vision' and GOOGLE_VISION_AVAILABLE:
@@ -81,76 +125,134 @@ class AIOCR:
             # デフォルトはpdfplumberを使用した既存の方式
             return self._extract_with_pdfplumber(pdf_path)
     
-    def _extract_with_google_vision(self, pdf_path: str) -> Tuple[Optional[int], Optional[str]]:
+    def _extract_with_google_vision(self, pdf_path: str) -> ExtractionResult:
         """
         Google Cloud Vision APIを使用して抽出
         """
-        from pdf2image import convert_from_path
-        
-        # PDFを画像に変換
-        images = convert_from_path(pdf_path, dpi=300, first_page=1, last_page=1)
-        
-        if not images:
-            return None, None
-        
-        # 最初のページを処理
-        img = images[0]
-        img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        content = img_byte_arr.getvalue()
-        
-        # Vision APIでOCR実行
-        image = vision.Image(content=content)
-        response = self.client.document_text_detection(image=image)
-        
-        if response.error.message:
-            print(f"Google Vision APIエラー: {response.error.message}")
-            return None, None
-        
-        # 全テキスト
-        full_text = response.full_text_annotation.text
-        
-        # 請求書解析AI処理
-        amount = self._extract_amount_with_ai(full_text)
-        customer = self._extract_customer_with_ai(full_text)
-        
-        return amount, customer
+        try:
+            from pdf2image import convert_from_path
+            
+            logger.info(f"Google Cloud Vision APIでPDFを処理: {pdf_path}")
+            
+            # PDFを画像に変換
+            images = convert_from_path(pdf_path, dpi=300, first_page=1, last_page=1)
+            
+            if not images:
+                logger.warning("PDFから画像への変換に失敗しました")
+                return ExtractionResult(customer=None, amount=None)
+            
+            # 最初のページを処理
+            img = images[0]
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='PNG')
+            content = img_byte_arr.getvalue()
+            
+            # Vision APIでOCR実行
+            image = vision.Image(content=content)
+            
+            try:
+                response = self.client.document_text_detection(image=image)
+                
+                if hasattr(response, 'error') and response.error and response.error.message:
+                    logger.error(f"Google Vision APIエラー: {response.error.message}")
+                    return ExtractionResult(customer=None, amount=None)
+                
+                # 全テキスト
+                if hasattr(response, 'full_text_annotation') and response.full_text_annotation:
+                    full_text = response.full_text_annotation.text
+                    logger.info(f"Google Cloud Vision APIでテキスト抽出成功: {len(full_text)}文字")
+                    
+                    # 請求書解析AI処理
+                    amount = self._extract_amount_with_ai(full_text)
+                    customer = self._extract_customer_with_ai(full_text)
+                    
+                    logger.info(f"抽出結果: 顧客名={customer}, 金額={amount}")
+                    return ExtractionResult(customer=customer, amount=amount)
+                else:
+                    logger.warning("Google Cloud Vision APIからテキストを取得できませんでした")
+                    return ExtractionResult(customer=None, amount=None)
+                    
+            except Exception as e:
+                logger.error(f"Google Cloud Vision API呼び出しエラー: {str(e)}")
+                return ExtractionResult(customer=None, amount=None)
+                
+        except Exception as e:
+            logger.error(f"Google Cloud Vision API処理エラー: {str(e)}")
+            return ExtractionResult(customer=None, amount=None)
     
-    def _extract_with_azure_form_recognizer(self, pdf_path: str) -> Tuple[Optional[int], Optional[str]]:
+    def _extract_with_azure_form_recognizer(self, pdf_path: str) -> ExtractionResult:
         """
         Azure Form Recognizerを使用して抽出
         """
-        with open(pdf_path, "rb") as f:
-            poller = self.client.begin_analyze_document("prebuilt-invoice", f)
-            invoices = poller.result()
-        
-        if not invoices.documents:
-            return None, None
-        
-        invoice = invoices.documents[0]
-        
-        # 請求額の抽出
-        amount = None
-        if invoice.fields.get("TotalAmount"):
-            amount_str = invoice.fields.get("TotalAmount").value
+        try:
+            logger.info(f"Azure Form RecognizerでPDFを処理: {pdf_path}")
+            
+            if not self.api_key or not self.endpoint:
+                logger.error("Azure Form RecognizerのAPIキーまたはエンドポイントが設定されていません")
+                return ExtractionResult(customer=None, amount=None)
+            
+            # クライアントが初期化されていない場合は再初期化
+            if not hasattr(self, 'client') or self.client is None:
+                try:
+                    self.client = DocumentAnalysisClient(
+                        endpoint=self.endpoint, 
+                        credential=AzureKeyCredential(self.api_key)
+                    )
+                    logger.info("Azure Form Recognizerクライアントを初期化しました")
+                except Exception as e:
+                    logger.error(f"Azure Form Recognizerクライアントの初期化エラー: {str(e)}")
+                    return ExtractionResult(customer=None, amount=None)
+            
+            # PDFファイルを開いて解析
             try:
-                # カンマや通貨記号を除去
-                amount_str = re.sub(r'[^\d.]', '', str(amount_str))
-                amount = int(float(amount_str))
-            except (ValueError, TypeError):
-                pass
-        
-        # 顧客名の抽出
-        customer = None
-        if invoice.fields.get("CustomerName"):
-            customer = invoice.fields.get("CustomerName").value
-            # 「様」が含まれていない場合は追加
-            if customer and "様" not in customer:
-                customer += "様"
-        
-        return amount, customer
+                with open(pdf_path, "rb") as f:
+                    # 請求書分析を開始
+                    poller = self.client.begin_analyze_document("prebuilt-invoice", f)
+                    # 結果を取得（非同期処理）
+                    invoices = poller.result()
+                    
+                    logger.info(f"Azure Form Recognizerの分析結果: {len(invoices.documents) if hasattr(invoices, 'documents') else 0}件の請求書を検出")
+                    
+                    if not hasattr(invoices, 'documents') or not invoices.documents:
+                        logger.warning("Azure Form Recognizerは請求書を検出できませんでした")
+                        return ExtractionResult(customer=None, amount=None)
+                    
+                    # 最初の請求書を処理
+                    invoice = invoices.documents[0]
+                    
+                    # 請求額の抽出
+                    amount = None
+                    if invoice.fields.get("TotalAmount"):
+                        amount_str = invoice.fields.get("TotalAmount").value
+                        try:
+                            # カンマや通貨記号を除去
+                            amount_str = re.sub(r'[^\d.]', '', str(amount_str))
+                            amount = int(float(amount_str))
+                            logger.info(f"Azure Form Recognizerから金額を抽出: {amount}")
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"金額の変換エラー: {str(e)}")
+                    
+                    # 顧客名の抽出
+                    customer = None
+                    if invoice.fields.get("CustomerName"):
+                        customer = invoice.fields.get("CustomerName").value
+                        # 「様」が含まれていない場合は追加
+                        if customer and "様" not in customer:
+                            customer += "様"
+                        logger.info(f"Azure Form Recognizerから顧客名を抽出: {customer}")
+                    
+                    logger.info(f"Azure Form Recognizerの抽出結果: 顧客名={customer}, 金額={amount}")
+                    return ExtractionResult(customer=customer, amount=amount)
+                    
+            except Exception as e:
+                logger.error(f"Azure Form Recognizerの文書分析エラー: {str(e)}")
+                return ExtractionResult(customer=None, amount=None)
+                
+        except Exception as e:
+            logger.error(f"Azure Form Recognizer処理エラー: {str(e)}")
+            return ExtractionResult(customer=None, amount=None)
     
-    def _extract_with_tesseract(self, pdf_path: str) -> Tuple[Optional[int], Optional[str]]:
+    def _extract_with_tesseract(self, pdf_path: str) -> ExtractionResult:
         """
         Tesseract OCRを使用して抽出
         """
@@ -172,9 +274,9 @@ class AIOCR:
         amount = self._extract_amount_with_ai(text)
         customer = self._extract_customer_with_ai(text)
         
-        return amount, customer
+        return ExtractionResult(customer=customer, amount=amount)
     
-    def _extract_with_pdfplumber(self, pdf_path: str) -> Tuple[Optional[int], Optional[str]]:
+    def _extract_with_pdfplumber(self, pdf_path: str) -> ExtractionResult:
         """
         pdfplumberを使用して抽出（既存の方式）
         """
@@ -277,6 +379,7 @@ class AIOCR:
                 try:
                     name = match.group(1).strip().replace('\n', '').replace('\r', '')
                     if len(name) > 1 and any(c.isalpha() for c in name):
+                        # context変数を必ず定義
                         context = priority_text[max(0, match.start() - 30):min(len(priority_text), match.end() + 30)]
                         weight = 5  # 最初の500文字は重要度高
                         
@@ -286,6 +389,7 @@ class AIOCR:
                         
                         found_names.append((name, weight, context))
                 except IndexError:
+                    # エラーが発生した場合はスキップ
                     continue
         
         if found_names:
@@ -303,7 +407,7 @@ class AIOCR:
 
 
 # 使用例
-def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> Tuple[Optional[int], Optional[str]]:
+def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> ExtractionResult:
     """
     AI OCRを使用してPDFを処理する便利関数
     様々なPDF形式に対応し、複数の抽出方法を試行
@@ -311,9 +415,9 @@ def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> Tuple[Optiona
         pdf_path: PDFファイルのパス
         config: 設定情報
     Returns:
-        (金額, 顧客名)のタプル
+        (顧客名, 金額)のタプル
     """
-    print(f"PDF処理開始: {pdf_path}")
+    logger.info(f"PDF処理開始: {pdf_path}")
     
     # 抽出結果を格納する変数
     amount = None
@@ -323,35 +427,35 @@ def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> Tuple[Optiona
     
     # 方法１: AI OCRを使用
     try:
-        print("AI OCRでの抽出を試行中...")
+        logger.info("AI OCRでの抽出を試行中...")
         ai_ocr = AIOCR(config)
-        amount, customer = ai_ocr.extract_from_pdf(pdf_path)
+        customer, amount = ai_ocr.extract_from_pdf(pdf_path)
         if amount is not None and customer is not None:
-            print(f"AI OCRで成功: 金額={amount}, 顧客名={customer}")
-            return amount, customer
+            logger.info(f"AI OCRで成功: 顧客名={customer}, 金額={amount}")
+            return ExtractionResult(customer=customer, amount=amount)
     except Exception as e:
-        print(f"AI OCR処理エラー: {str(e)}")
+        logger.error(f"AI OCR処理エラー: {str(e)}")
     
     # 方法２: pdfplumberを使用
     pdfplumber_text = ""
     try:
-        print("pdfplumberでの抽出を試行中...")
+        logger.info("pdfplumberでの抽出を試行中...")
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
                 pdfplumber_text += page_text
         
         if pdfplumber_text.strip():
-            print(f"pdfplumberでテキスト抽出成功: {len(pdfplumber_text)}文字")
+            logger.info(f"pdfplumberでテキスト抽出成功: {len(pdfplumber_text)}文字")
             extracted_text = pdfplumber_text
             all_extracted_texts.append(pdfplumber_text)
     except Exception as e:
-        print(f"pdfplumber処理エラー: {str(e)}")
+        logger.error(f"pdfplumber処理エラー: {str(e)}")
     
     # 方法３: PyPDF2を使用
     pypdf2_text = ""
     try:
-        print("PyPDF2での抽出を試行中...")
+        logger.info("PyPDF2での抽出を試行中...")
         import PyPDF2
         with open(pdf_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
@@ -361,17 +465,17 @@ def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> Tuple[Optiona
                 pypdf2_text += page_text
         
         if pypdf2_text.strip():
-            print(f"PyPDF2でテキスト抽出成功: {len(pypdf2_text)}文字")
+            logger.info(f"PyPDF2でテキスト抽出成功: {len(pypdf2_text)}文字")
             if not extracted_text.strip():
                 extracted_text = pypdf2_text
             all_extracted_texts.append(pypdf2_text)
     except Exception as e:
-        print(f"PyPDF2処理エラー: {str(e)}")
+        logger.error(f"PyPDF2処理エラー: {str(e)}")
     
     # 方法４: pdf2image + pytesseractを使用
     tesseract_text = ""
     try:
-        print("pdf2image + pytesseractでの抽出を試行中...")
+        logger.info("pdf2image + pytesseractでの抽出を試行中...")
         if TESSERACT_AVAILABLE:
             from pdf2image import convert_from_path
             images = convert_from_path(pdf_path)
@@ -380,60 +484,65 @@ def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> Tuple[Optiona
                 tesseract_text += page_text or ""
             
             if tesseract_text.strip():
-                print(f"pdf2image + pytesseractでテキスト抽出成功: {len(tesseract_text)}文字")
+                logger.info(f"pdf2image + pytesseractでテキスト抽出成功: {len(tesseract_text)}文字")
                 if not extracted_text.strip():
                     extracted_text = tesseract_text
                 all_extracted_texts.append(tesseract_text)
     except Exception as e:
-        print(f"pdf2image + pytesseract処理エラー: {str(e)}")
+        logger.error(f"pdf2image + pytesseract処理エラー: {str(e)}")
         
     # 方法５: pdfminer.sixを使用（文字化け対策）
     pdfminer_text = ""
     try:
-        print("pdfminer.sixでの抽出を試行中...")
+        logger.info("pdfminer.sixでの抽出を試行中...")
         from pdfminer.high_level import extract_text as pdfminer_extract_text
         pdfminer_text = pdfminer_extract_text(pdf_path)
         
         if pdfminer_text.strip():
-            print(f"pdfminer.sixでテキスト抽出成功: {len(pdfminer_text)}文字")
+            logger.info(f"pdfminer.sixでテキスト抽出成功: {len(pdfminer_text)}文字")
             if not extracted_text.strip():
                 extracted_text = pdfminer_text
             all_extracted_texts.append(pdfminer_text)
     except Exception as e:
-        print(f"pdfminer.six処理エラー: {str(e)}")
+        logger.error(f"pdfminer.six処理エラー: {str(e)}")
     
     # 抽出したテキストから金額と顧客名を抽出
     if extracted_text.strip():
         try:
-            from extractors import extract_amount_and_customer, extract_amount_only, extract_customer
+            from extractors import extract_amount_and_customer, extract_amount_only, ExtractionResult
+            import customer_extractor  # 新しい顧客名抽出モジュールをインポート
             
             # 最初に主要なテキストから抽出を試みる
-            amount, customer = extract_amount_and_customer(extracted_text)
+            extraction_result = extract_amount_and_customer(extracted_text)
+            customer = extraction_result.customer
+            amount = extraction_result.amount
             
             # すべての抽出テキストを試す（金額または顧客名が見つからない場合）
             if amount is None or customer is None:
-                print("複数の抽出テキストから金額と顧客名を検索中...")
+                logger.info("複数の抽出テキストから金額と顧客名を検索中...")
                 for i, text in enumerate(all_extracted_texts):
                     if text != extracted_text:  # 既に処理したテキストはスキップ
-                        print(f"抽出テキスト {i+1} を処理中...")
+                        logger.info(f"抽出テキスト {i+1} を処理中...")
                         if amount is None:
                             amount = extract_amount_only(text)
                             if amount is not None:
-                                print(f"追加テキストから金額を抽出: {amount}円")
+                                logger.info(f"追加テキストから金額を抽出: {amount}円")
                         
                         if customer is None:
-                            customer = extract_customer(text)
+                            # ファイル名も渡して顧客名を抽出
+                            filename = os.path.basename(pdf_path) if pdf_path else None
+                            customer = customer_extractor.extract_customer(text, filename)
                             if customer is not None:
-                                print(f"追加テキストから顧客名を抽出: {customer}")
+                                logger.info(f"追加テキストから顧客名を抽出: {customer}")
                         
                         # 両方見つかったら終了
                         if amount is not None and customer is not None:
                             break
             
-            print(f"最終抽出結果: 金額={amount}, 顧客名={customer}")
-            return amount, customer
+            logger.info(f"最終抽出結果: 顧客名={customer}, 金額={amount}")
+            return ExtractionResult(customer=customer, amount=amount)
         except Exception as e:
-            print(f"金額と顧客名の抽出エラー: {str(e)}")
+            logger.error(f"金額と顧客名の抽出エラー: {str(e)}")
     
-    print("PDFからテキストを抽出できませんでした")
-    return None, None
+    logger.warning("PDFからテキストを抽出できませんでした")
+    return ExtractionResult(customer=None, amount=None)

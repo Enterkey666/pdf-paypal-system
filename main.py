@@ -3,9 +3,14 @@ import pdfplumber
 import requests
 import json
 import csv
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
-from extractors import extract_amount_and_customer
+from extractors import extract_amount_and_customer, ExtractionResult
+
+# ロガー設定
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 PDF_DIR = "pdfs"
 RESULTS_DIR = "results"
@@ -95,49 +100,51 @@ def save_to_csv(results):
 
 def main():
     if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
-        print("PayPalのAPIキーが設定されていません。.envファイルを確認してください。")
+        logger.error("PayPalのAPIキーが設定されていません。.envファイルを確認してください。")
         return
         
     if not os.path.exists(PDF_DIR):
-        print(f"{PDF_DIR} フォルダが存在しません。作成します。")
+        logger.info(f"{PDF_DIR} フォルダが存在しません。作成します。")
         os.makedirs(PDF_DIR)
-        print(f"PDFファイルを {PDF_DIR} フォルダに配置してから再実行してください。")
+        logger.info(f"PDFファイルを {PDF_DIR} フォルダに配置してから再実行してください。")
         return
         
     pdf_files = [f for f in os.listdir(PDF_DIR) if f.lower().endswith('.pdf')]
     if not pdf_files:
-        print("PDFファイルが見つかりません。")
+        logger.warning("PDFファイルが見つかりません。")
         return
         
     results = []
     for pdf_file in pdf_files:
         pdf_path = os.path.join(PDF_DIR, pdf_file)
-        print(f"\n--- 処理中: {pdf_file} ---")
+        logger.info(f"\n--- 処理中: {pdf_file} ---")
         
         # PDFからテキスト抽出
         text = extract_text_from_pdf(pdf_path)
-        print(f"テキスト抽出完了: {len(text)} 文字")
+        logger.info(f"テキスト抽出完了: {len(text)} 文字")
         
-        # 金額と顧客名を抽出
-        amount, customer_name = extract_amount_and_customer(text)
+        # 顧客名と金額を抽出（名前付きタプルを使用）
+        extraction_result = extract_amount_and_customer(text)
+        customer_name = extraction_result.customer
+        amount = extraction_result.amount
         
         if not amount:
-            print("警告: 金額を自動検出できませんでした。デフォルト値を使用します。")
+            logger.warning("警告: 金額を自動検出できませんでした。デフォルト値を使用します。")
             amount = 1000  # デフォルト金額
         
         customer_display = customer_name if customer_name else "不明"
-        print(f"顧客名: {customer_display}")
-        print(f"金額: {amount}円")
+        logger.info(f"顧客名: {customer_display}")
+        logger.info(f"金額: {amount}円")
         
         # 決済リンク作成
         description = f"{customer_display if customer_display != '不明' else ''} {pdf_file}".strip()
         try:
             payment_url = create_paypal_payment_link(amount, "JPY", description)
-            print(f"決済リンク生成完了: {payment_url}")
+            logger.info(f"決済リンク生成完了: {payment_url}")
             status = "成功"
         except Exception as e:
             payment_url = "エラー: " + str(e)
-            print(f"決済リンク生成失敗: {str(e)}")
+            logger.error(f"決済リンク生成失敗: {str(e)}")
             status = "失敗"
         
         # 結果を記録
@@ -152,8 +159,8 @@ def main():
     # 結果をCSVに保存
     if results:
         csv_path = save_to_csv(results)
-        print(f"\n処理結果をCSVに保存しました: {csv_path}")
-        print(f"処理済みPDF: {len(results)}件")
+        logger.info(f"\n処理結果をCSVに保存しました: {csv_path}")
+        logger.info(f"処理済みPDF: {len(results)}件")
 
 if __name__ == "__main__":
     main()

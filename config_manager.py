@@ -10,7 +10,12 @@ import os
 import json
 import logging
 import paypalrestsdk
+import secrets
 from typing import Dict, Any, Optional, Tuple
+from dotenv import load_dotenv
+
+# .envファイルから環境変数を読み込む
+load_dotenv()
 
 # ロガー設定
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +29,7 @@ DEFAULT_CONFIG = {
     "default_currency": "JPY",
     "enable_customer_extraction": "1",
     "enable_amount_extraction": "1",
+    "use_ai_ocr": False,
     "default_amount": 1000
 }
 
@@ -42,6 +48,9 @@ class ConfigManager:
         """
         self.config_path = config_path
         self.config = self.load_config()
+        
+        # 環境変数から設定を更新（環境変数が優先）
+        self.update_from_env()
     
     def load_config(self) -> Dict[str, Any]:
         """
@@ -80,10 +89,8 @@ class ConfigManager:
             保存が成功したかどうか
         """
         try:
-            # 既存のキーを更新
-            for key, value in config.items():
-                if key in self.config:
-                    self.config[key] = value
+            # 渡されたキーで設定を更新（新規キーも受け入れる）
+            self.config.update(config)
             
             # ファイルに保存
             with open(self.config_path, 'w', encoding='utf-8') as f:
@@ -170,23 +177,59 @@ class ConfigManager:
     
     def update_from_env(self) -> None:
         """
-        環境変数から設定を更新する（.envファイルとの互換性用）
+        環境変数から設定を更新する
+        環境変数は設定ファイルよりも優先される
         """
+        # PayPal API認証情報とアプリ設定のマッピング
         env_mapping = {
+            # PayPal API認証情報
             "PAYPAL_CLIENT_ID": "paypal_client_id",
             "PAYPAL_CLIENT_SECRET": "paypal_client_secret",
-            "PAYPAL_MODE": "paypal_mode"
+            "PAYPAL_MODE": "paypal_mode",
+            # アプリ設定
+            "DEFAULT_CURRENCY": "default_currency",
+            "DEFAULT_AMOUNT": "default_amount",
+            "ENABLE_CUSTOMER_EXTRACTION": "enable_customer_extraction",
+            "ENABLE_AMOUNT_EXTRACTION": "enable_amount_extraction",
+            "USE_AI_OCR": "use_ai_ocr",
+            "OCR_METHOD": "ocr_method",
+            "OCR_ENDPOINT": "ocr_endpoint"
         }
         
         updated = False
         for env_key, config_key in env_mapping.items():
             env_value = os.getenv(env_key)
-            if env_value and env_value != self.config.get(config_key):
-                self.config[config_key] = env_value
-                updated = True
+            if env_value is not None:
+                # 型変換処理
+                if config_key in ["default_amount"]:
+                    try:
+                        env_value = int(env_value)
+                    except ValueError:
+                        logger.warning(f"環境変数{env_key}の値を整数に変換できませんでした: {env_value}")
+                        continue
+                elif config_key in ["use_ai_ocr"]:
+                    env_value = env_value.lower() in ["true", "1", "yes"]
+                
+                # 設定を更新
+                if env_value != self.config.get(config_key):
+                    self.config[config_key] = env_value
+                    updated = True
+                    logger.debug(f"環境変数から設定を更新: {config_key} = {env_value}")
+        
+        # セキュリティ関連の設定を追加
+        self.config["admin_username"] = os.getenv("ADMIN_USERNAME", "admin")
+        self.config["admin_password"] = os.getenv("ADMIN_PASSWORD", "")
+        self.config["secret_key"] = os.getenv("SECRET_KEY", secrets.token_hex(16))
+        self.config["enable_https"] = os.getenv("ENABLE_HTTPS", "").lower() in ["true", "1", "yes"]
         
         if updated:
-            self.save_config(self.config)
+            # 設定ファイルには認証情報を含めないようにする
+            safe_config = self.config.copy()
+            if "admin_username" in safe_config: del safe_config["admin_username"]
+            if "admin_password" in safe_config: del safe_config["admin_password"]
+            if "secret_key" in safe_config: del safe_config["secret_key"]
+            
+            self.save_config(safe_config)
             logger.info("環境変数から設定を更新しました")
             
     def test_paypal_connection(self, client_id: Optional[str] = None, client_secret: Optional[str] = None, mode: Optional[str] = None) -> Tuple[bool, str]:
@@ -213,8 +256,26 @@ class ConfigManager:
                 "client_secret": test_client_secret
             })
             
-            # Perform a simple API call to test the connection
-            payments = paypalrestsdk.Payment.all({'count': 1}) # type: ignore
+            # Perform a simple API call to test the connection with timeout
+            import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            
+            # PayPalRestSDKのHTTPクライアントを設定
+            session = requests.Session()
+            retry_strategy = Retry(
+                total=2,  # 最大2回リトライ
+                backoff_factor=1,  # リトライ間の待機時間係数
+                status_forcelist=[429, 500, 502, 503, 504]  # リトライするHTTPステータスコード
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
+            # タイムアウト設定を追加してAPI呼び出し
+            paypalrestsdk.api.default_api_client.session = session
+            payments = paypalrestsdk.Payment.all({'count': 1}, {'timeout': (5, 10)})  # 接続タイムアウト5秒、読み取りタイムアウト10秒
+            
             # If the above call doesn't raise an exception, the connection is successful
             msg = "PayPal APIへの接続に成功しました。"
             logger.info(msg)

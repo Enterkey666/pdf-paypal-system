@@ -37,6 +37,7 @@ results/*
 
 # ログファイル
 *.log
+error_summary.txt
 
 # IDEの設定
 .idea/

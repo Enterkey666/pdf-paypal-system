@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>設定 - PDF処理 & PayPal決済リンク発行システム</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
@@ -35,6 +36,12 @@
             font-size: 0.8rem;
             padding: 0.4rem 0.7rem;
         }
+        .mode-badge {
+            font-size: 0.7rem;
+            padding: 0.3rem 0.6rem;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
         .tooltip-icon {
             cursor: help;
             color: #6c757d;
@@ -49,6 +56,11 @@
         <div class="container">
             <a class="navbar-brand" href="/">
                 <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク
+                {% if paypal_mode == 'live' %}
+                <span class="badge bg-success mode-badge">本番環境</span>
+                {% else %}
+                <span class="badge bg-warning mode-badge">サンドボックス</span>
+                {% endif %}
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -59,11 +71,26 @@
                         <a class="nav-link" href="/"><i class="bi bi-house"></i> ホーム</a>
                     </li>
                     <li class="nav-item">
+                        <a class="nav-link active" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    </li>
+                    {% if session.get('admin_logged_in') %}
+                    <li class="nav-item">
                         <a class="nav-link" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link active" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                        <a class="nav-link text-danger" href="/logout"><i class="bi bi-box-arrow-right"></i> ログアウト</a>
                     </li>
+                    <li class="nav-item">
+                        <span class="badge bg-primary rounded-pill ms-2 mt-2"><i class="bi bi-shield-check"></i> 管理者</span>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link text-success" href="/login"><i class="bi bi-box-arrow-in-right"></i> 管理者ログイン</a>
+                    </li>
+                    <li class="nav-item">
+                        <span class="badge bg-secondary rounded-pill ms-2 mt-2"><i class="bi bi-person"></i> ゲスト</span>
+                    </li>
+                    {% endif %}
                 </ul>
             </div>
         </div>
@@ -78,6 +105,37 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
         {% endif %}
+        
+        <!-- ユーザー状態と権限の説明 -->
+        <div class="alert alert-info mb-4">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <i class="bi bi-info-circle-fill fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="mb-1">現在の状態: 
+                        {% if session.get('admin_logged_in') %}
+                        <span class="badge bg-primary"><i class="bi bi-shield-check"></i> 管理者</span>
+                        {% else %}
+                        <span class="badge bg-secondary"><i class="bi bi-person"></i> ゲスト</span>
+                        {% endif %}
+                        
+                        {% if paypal_mode == 'live' %}
+                        <span class="badge bg-success"><i class="bi bi-lightning-charge"></i> 本番環境</span>
+                        {% else %}
+                        <span class="badge bg-warning"><i class="bi bi-tools"></i> サンドボックス環境</span>
+                        {% endif %}
+                    </h5>
+                    <p class="mb-0">
+                        {% if session.get('admin_logged_in') %}
+                        管理者としてログインしています。すべての設定を変更できます。
+                        {% else %}
+                        ゲストユーザーとして閲覧しています。サンドボックス環境の設定のみ変更できます。
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
         
         <div class="row">
             <div class="col-lg-8">
@@ -98,40 +156,62 @@
                                 <label for="paypal_mode">
                                     環境モード
                                     <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
-                                       title="開発中はsandboxを選択してください。本番環境では実際の取引が行われます。"></i>
+                                       title="サンドボックス: テスト環境、本番: 実際の決済が発生します"></i>
                                 </label>
-                                <select class="form-select" id="paypal_mode" name="paypal_mode">
-                                    <option value="sandbox" {% if current_settings.paypal_mode == 'sandbox' %}selected{% endif %}>Sandbox (テスト環境)</option>
-                                    <option value="live" {% if current_settings.paypal_mode == 'live' %}selected{% endif %}>Live (本番環境)</option>
+                                <select class="form-select" id="paypal_mode" name="paypal_mode" 
+                                        {% if not is_admin %}disabled{% endif %}>
+                                    <option value="sandbox" {% if config.paypal_mode == 'sandbox' or not config.paypal_mode %}selected{% endif %}>サンドボックス</option>
+                                    <option value="live" {% if config.paypal_mode == 'live' %}selected{% endif %}>本番</option>
                                 </select>
+                                {% if not is_admin %}
+                                <small class="text-muted">環境モードの変更は管理者のみ可能です</small>
+                                {% endif %}
+                                <div class="mt-2">
+                                    <span class="badge {% if config.paypal_mode == 'live' %}bg-success{% else %}bg-warning{% endif %} p-2">
+                                        <i class="bi {% if config.paypal_mode == 'live' %}bi-lightning-charge{% else %}bi-tools{% endif %}"></i>
+                                        現在: {% if config.paypal_mode == 'live' %}本番環境{% else %}サンドボックス環境{% endif %}
+                                    </span>
+                                </div>
                             </div>
                             
                             <div class="form-group">
                                 <label for="paypal_client_id">
                                     PayPal Client ID
                                     <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
-                                       title="PayPalデベロッパーダッシュボードで取得できるClient IDです。"></i>
+                                       title="PayPal開発者ページで取得したClient ID"></i>
                                 </label>
-                                <input type="text" class="form-control" id="paypal_client_id" name="paypal_client_id" 
-                                       value="{{ current_settings.paypal_client_id }}" required>
+                                <input type="text" class="form-control" id="paypal_client_id" name="client_id" 
+                                       value="{{ config.client_id }}" 
+                                       {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}
+                                       placeholder="PayPal Developer Portalで取得したClient IDを入力">
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <small class="text-muted">本番環境のClient IDの変更は管理者のみ可能です</small>
+                                {% endif %}
                             </div>
                             
                             <div class="form-group">
                                 <label for="paypal_client_secret">
                                     PayPal Client Secret
                                     <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
-                                       title="PayPalデベロッパーダッシュボードで取得できるClient Secretです。"></i>
+                                       title="PayPal開発者ページで取得したClient Secret"></i>
                                 </label>
                                 <div class="input-group">
-                                    <input type="password" class="form-control" id="paypal_client_secret" name="paypal_client_secret" 
-                                           value="{{ current_settings.paypal_client_secret }}" required>
-                                    <div class="input-group-text">
-                                        <div class="form-check form-check-inline">
-                                            <input class="form-check-input" type="checkbox" id="show_secret">
-                                            <label class="form-check-label" for="show_secret">表示</label>
+                                    <input type="password" class="form-control" id="paypal_client_secret" name="client_secret" 
+                                           value="{{ config.client_secret }}" 
+                                           {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}
+                                           placeholder="PayPal Developer Portalで取得したClient Secretを入力">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_secret">
+                                                <label class="form-check-label" for="show_secret">表示</label>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <small class="text-muted">本番環境のClient Secretの変更は管理者のみ可能です</small>
+                                {% endif %}
                             </div>
 
                             <div class="form-group mt-3 mb-3">
@@ -146,9 +226,9 @@
                             <div class="form-group">
                                 <label for="default_currency">デフォルト通貨</label>
                                 <select class="form-select" id="default_currency" name="default_currency">
-                                    <option value="JPY" {% if current_settings.default_currency == 'JPY' %}selected{% endif %}>日本円 (JPY)</option>
-                                    <option value="USD" {% if current_settings.default_currency == 'USD' %}selected{% endif %}>米ドル (USD)</option>
-                                    <option value="EUR" {% if current_settings.default_currency == 'EUR' %}selected{% endif %}>ユーロ (EUR)</option>
+                                    <option value="JPY" {% if config.default_currency == 'JPY' %}selected{% endif %}>日本円 (JPY)</option>
+                                    <option value="USD" {% if config.default_currency == 'USD' %}selected{% endif %}>米ドル (USD)</option>
+                                    <option value="EUR" {% if config.default_currency == 'EUR' %}selected{% endif %}>ユーロ (EUR)</option>
                                 </select>
                             </div>
                             
@@ -208,38 +288,55 @@
                             <div class="form-group">
                                 <label for="enable_customer_extraction">顧客名抽出</label>
                                 <select class="form-select" id="enable_customer_extraction" name="enable_customer_extraction">
-                                    <option value="1" {% if current_settings.enable_customer_extraction == '1' %}selected{% endif %}>有効</option>
-                                    <option value="0" {% if current_settings.enable_customer_extraction == '0' %}selected{% endif %}>無効</option>
+                                    <option value="1" {% if config.enable_customer_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if config.enable_customer_extraction == '0' %}selected{% endif %}>無効</option>
                                 </select>
                             </div>
                             
                             <div class="form-group">
                                 <label for="enable_amount_extraction">請求金額抽出</label>
                                 <select class="form-select" id="enable_amount_extraction" name="enable_amount_extraction">
-                                    <option value="1" {% if current_settings.enable_amount_extraction == '1' %}selected{% endif %}>有効</option>
-                                    <option value="0" {% if current_settings.enable_amount_extraction == '0' %}selected{% endif %}>無効</option>
+                                    <option value="1" {% if config.enable_amount_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if config.enable_amount_extraction == '0' %}selected{% endif %}>無効</option>
                                 </select>
                             </div>
                             
                             <div class="form-group">
                                 <label for="default_amount">金額抽出失敗時のデフォルト額（円）</label>
                                 <input type="number" class="form-control" id="default_amount" name="default_amount" 
-                                       value="{{ current_settings.default_amount|default(1000) }}">
+                                       value="{{ config.default_amount|default(1000) }}">
                             </div>
                             
                             <!-- 保存ボタンを設定の下に追加 -->
-                            <div class="d-grid gap-2 mt-4">
-                                <button type="submit" class="btn btn-save text-white" form="settings-form">
-                                    <i class="bi bi-save"></i> すべての設定を保存
+                            <div class="form-group mt-4">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-primary btn-save" {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}>
+                                    <i class="bi bi-save"></i> 設定を保存
                                 </button>
+                                
+                                <!-- エクスポート/インポートボタン -->
+                                {% if show_all_settings or show_sandbox_settings %}
+                                <button type="button" class="btn btn-outline-secondary ms-2" id="export_settings_button">
+                                    <i class="bi bi-download"></i> 設定をエクスポート
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary ms-2" id="import_settings_button">
+                                    <i class="bi bi-upload"></i> 設定をインポート
+                                </button>
+                                {% endif %}
+                                
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <div class="alert alert-warning mt-3">
+                                    <i class="bi bi-exclamation-triangle-fill"></i> 本番環境の設定は管理者のみ変更できます。サンドボックス環境の設定のみ変更可能です。
+                                </div>
+                                {% endif %}
                             </div>
                     </div>
                 </div>
             </div>
             
+            </form> <!-- メインフォームの終了タグ -->
+            
             <div class="col-lg-4">
-                </form> <!-- メインフォームの終了タグ -->
-
                 <div class="card settings-card">
                     <div class="card-header">
                         <h5 class="mb-0"><i class="bi bi-info-circle"></i> システム情報</h5>
@@ -260,7 +357,7 @@
                         
                         <hr>
                         
-                        <a href="/export_settings" class="btn btn-sm btn-outline-secondary w-100 mb-2">
+                        <a href="/settings/export" class="btn btn-sm btn-outline-secondary w-100 mb-2">
                             <i class="bi bi-download"></i> 設定のエクスポート
                         </a>
                         <a href="#" class="btn btn-sm btn-outline-secondary w-100" data-bs-toggle="modal" data-bs-target="#importModal">
@@ -308,7 +405,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <form action="/import_settings" method="post" enctype="multipart/form-data">
+                    <form action="/settings/import" method="post" enctype="multipart/form-data">
                         <div class="mb-3">
                             <label for="settings_file" class="form-label">設定ファイル (.json)</label>
                             <input class="form-control" type="file" id="settings_file" name="settings_file" accept=".json">
@@ -391,6 +488,9 @@
             const clientId = document.getElementById('paypal_client_id').value;
             const clientSecret = document.getElementById('paypal_client_secret').value;
             const mode = document.getElementById('paypal_mode').value;
+            
+            // CSRFトークンを取得（Flaskのテンプレートで自動的に挿入される）
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
             statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
             button.disabled = true;
@@ -399,11 +499,11 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    // 'X-CSRFToken': '/* csrf_token would go here */' // CSRF保護が有効な場合
+                    'X-CSRFToken': csrfToken || ''
                 },
                 body: JSON.stringify({
-                    paypal_client_id: clientId,
-                    paypal_client_secret: clientSecret,
+                    client_id: clientId,
+                    client_secret: clientSecret,
                     paypal_mode: mode
                 })
             })

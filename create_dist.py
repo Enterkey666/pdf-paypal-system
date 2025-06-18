@@ -12,7 +12,12 @@ import os
 import sys
 import shutil
 import zipfile
+import logging
 from datetime import datetime
+
+# ロガー設定
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # バージョン情報
 VERSION = "1.0.0"
@@ -208,9 +213,9 @@ def create_distribution_zip():
             file_path = os.path.join(current_dir, file)
             if os.path.exists(file_path):
                 zipf.write(file_path, file)
-                print(f"追加: {file}")
+                logger.info(f"追加: {file}")
             else:
-                print(f"警告: {file}が見つかりません。スキップします。")
+                logger.warning(f"警告: {file}が見つかりません。スキップします。")
         
         # ディレクトリの追加（再帰的に）
         for directory in INCLUDE_DIRS:
@@ -222,22 +227,22 @@ def create_distribution_zip():
                         rel_path = os.path.relpath(file_path, current_dir)
                         if not should_exclude(rel_path):
                             zipf.write(file_path, rel_path)
-                            print(f"追加: {rel_path}")
+                            logger.info(f"追加: {rel_path}")
             else:
-                print(f"警告: ディレクトリ{directory}が見つかりません。スキップします。")
+                logger.warning(f"警告: ディレクトリ{directory}が見つかりません。スキップします。")
         
         # 空のディレクトリを追加
         create_empty_directories(zipf)
         
         # インストールガイドを追加
         zipf.write(install_guide, os.path.basename(install_guide))
-        print(f"追加: {os.path.basename(install_guide)}")
+        logger.info(f"追加: {os.path.basename(install_guide)}")
     
     # インストールガイドを削除
     os.remove(install_guide)
     
-    print(f"\n配布用ZIPファイルを作成しました: {zip_path}")
-    print(f"ファイルサイズ: {os.path.getsize(zip_path) / 1024:.2f} KB")
+    logger.info(f"\n配布用ZIPファイルを作成しました: {zip_path}")
+    logger.info(f"ファイルサイズ: {os.path.getsize(zip_path) / 1024:.2f} KB")
     
     return zip_path
 
@@ -245,17 +250,17 @@ def main():
     """
     メイン処理
     """
-    print("=== PDF処理 & PayPal決済リンク発行システム 配布パッケージ作成 ===")
-    print(f"バージョン: {VERSION}")
-    print(f"ビルド日: {BUILD_DATE}")
-    print("作成を開始します...\n")
+    logger.info("=== PDF処理 & PayPal決済リンク発行システム 配布パッケージ作成 ===")
+    logger.info(f"バージョン: {VERSION}")
+    logger.info(f"ビルド日: {BUILD_DATE}")
+    logger.info("作成を開始します...\n")
     
     try:
         zip_path = create_distribution_zip()
-        print("\n正常に完了しました！")
+        logger.info("\n正常に完了しました！")
         return 0
     except Exception as e:
-        print(f"\nエラーが発生しました: {str(e)}")
+        logger.error(f"\nエラーが発生しました: {str(e)}")
         return 1
 
 if __name__ == "__main__":

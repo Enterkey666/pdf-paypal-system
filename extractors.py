@@ -1,86 +1,114 @@
 import re
-from typing import Tuple, Optional
+import logging
+from typing import Tuple, Optional, List, Dict, Any, NamedTuple
+
+# 新しいモジュールをインポート
+from text_normalizer import normalize_text, extract_readable_content
+
+
+def is_valid_customer_name(customer: str, invalid_terms: list) -> bool:
+    """
+    顧客名が有効かどうかをチェックする
+    
+    Args:
+        customer: チェックする顧客名
+        invalid_terms: 無効な用語のリスト
+        
+    Returns:
+        bool: 有効な顧客名であればTrue、そうでなければFalse
+    """
+    # 空文字列や None の場合は無効
+    if not customer:
+        print(f"空の顧客名を除外")
+        return False
+        
+    # 数字のみの顧客名は無効
+    if customer.isdigit():
+        print(f"数字のみの顧客名を除外: {customer}")
+        return False
+    
+    # 顧客名が短すぎる場合も除外
+    if len(customer) < 2:
+        print(f"短すぎる顧客名を除外: {customer}")
+        return False
+        
+    # 顧客名に文字が含まれているか確認
+    if not any(c.isalpha() for c in customer):
+        print(f"文字が含まれていない顧客名を除外: {customer}")
+        return False
+    
+    # 顧客名が金額関連の用語でないかチェック
+    for invalid_term in invalid_terms:
+        if invalid_term in customer or customer in invalid_term:
+            print(f"金額関連の用語を顧客名から除外: {customer} (含まれる無効な用語: {invalid_term})")
+            return False
+            
+    # すべてのチェックをパスした場合は有効
+    return True
+from amount_extractor import extract_invoice_amount
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
+
+# 抽出結果を表す名前付きタプル
+class ExtractionResult(NamedTuple):
+    customer: Optional[str]
+    amount: Optional[str]
+    context: Optional[Dict[str, Any]] = None  # 追加情報（元の行、スコアなど）
 
 def extract_amount_only(text: str) -> Optional[int]:
     """
-    PDFテキストから金額のみを抽出する関数
-    全角数字や特殊な表記方法にも対応
+    テキストから金額のみを抽出する
+    複数の正規表現パターンを使用して金額を抽出し、最も適切なものを返す
+    
+    Args:
+        text: 抽出元のテキスト
+        
+    Returns:
+        抽出された金額（整数）、見つからない場合はNone
     """
-    # テキストの正規化（全角数字を半角に変換）
-    normalized_text = text
+    if not text:
+        return None
     
-    # 全角数字を半角に変換
-    zenkaku_digits = {
-        '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-        '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-        '　': ' ', '，': ',', '．': '.', '￥': '¥'
-    }
-    for zen, han in zenkaku_digits.items():
-        normalized_text = normalized_text.replace(zen, han)
+    # デバッグ情報
+    logger.info(f"金額抽出処理開始 (テキスト長: {len(text)} 文字)")
+        
+    # テキストの正規化（全角→半角、空白除去など）
+    normalized_text = normalize_text(text)
     
-    # 漢数字をアラビア数字に変換
-    kanji_digits = {
+    # 文字化けしているテキストから読みやすい部分を抽出
+    readable_data = extract_readable_content(text)
+    if readable_data["readable_ratio"] < 0.5:  # 読める文字が50%未満の場合
+        # 読み取り可能な部分だけを使用
+        text = readable_data["text"]
+        normalized_text = normalize_text(text)
+        logger.info(f"読み取り可能な部分のみ使用: {len(text)} 文字")
+    
+    # コンテキスト情報を取得（「万」などの単位を検出するため）
+    context = texts = {
         '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
         '六': '6', '七': '7', '八': '8', '九': '9', '零': '0',
         '拾': '10', '百': '00', '千': '000', '万': '0000'
     }
     
-    # 漢数字の変換は複雑なので、特定のパターンを探す
-    kanji_patterns = [
-        (r'一万', '10000'), (r'二万', '20000'), (r'三万', '30000'),
-        (r'四万', '40000'), (r'五万', '50000'), (r'六万', '60000'),
-        (r'七万', '70000'), (r'八万', '80000'), (r'九万', '90000'),
-        (r'百万', '1000000'), (r'千万', '10000000')
-    ]
-    
-    for pattern, replacement in kanji_patterns:
-        normalized_text = re.sub(pattern, replacement, normalized_text)
-    
-    # 金額抽出のパターン（優先度順）
+    # 金額を抽出するための正規表現パターン（優先度順）
     amount_patterns = [
-        # ご請求額パターン（最優先）
-        r'ご\s*請\s*求\s*額[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        r'ご\s*請\s*求\s*額[^\n]*?[¥\u00a5]\s*([0-9,.]+)',
+        # 請求書や領収書でよく使われるパターン（最優先）
+        r'(?:ご請求金額|請求金額|請求額|合計金額|合計額|総額|お支払金額|お支払い金額)[\s:：]*[¥￥]?\s*([0-9,.]+)',
+        r'(?:合計|総計|総合計|総請求額)[\s:：]*[¥￥]?\s*([0-9,.]+)',
         
-        # 請求額パターン
-        r'請\s*求\s*額[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        r'請\s*求\s*額[^\n]*?[¥\u00a5]\s*([0-9,.]+)',
-        
-        # 合計金額パターン
-        r'合\s*計\s*金\s*額[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        r'合\s*計\s*金\s*額[^\n]*?[¥\u00a5]\s*([0-9,.]+)',
-        
-        # 表の「合計」行にある金額パターン
-        r'\b合\s*計\b[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        r'\b合\s*計\b[^\n]*?[¥\u00a5]\s*([0-9,.]+)',
-        
-        # 金額欄のパターン
-        r'金\s*額[^\n]*?\s*[¥\u00a5]?\s*([0-9,.]+)(?:\s*円|\s*$)',
-        
-        # 総額パターン
-        r'総\s*額[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        r'総\s*額[^\n]*?[¥\u00a5]\s*([0-9,.]+)',
-        
-        # 小計パターン
-        r'小\s*計[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        
-        # サンプル請求書形式の金額パターン
-        r'[¥\u00a5]\s*([0-9,.]+)\s*[-‐-―]',
-        
-        # 単純な金額パターン
+        # 金額の前後に「円」がつくパターン
         r'([0-9,.]+)\s*円',
+        r'金額[\s:：]*([0-9,.]+)\s*円',
         
-        # 全角カッコ内の金額パターン
-        r'（([0-9,.]+)）',
+        # 通貨記号付きの金額
+        r'[¥￥]\s*([0-9,.￥¥]+)',
         
-        # 「?」や「�」が含まれる数字パターン（特殊フォント対応）
-        r'ご\s*請\s*求\s*(?:金\s*額|額)[^\n]*?[¥￥]?\s*([0-9?,.�\\uFFFD]+)(?:\s*円|\s*$)',
-        r'請\s*求\s*(?:金\s*額|額)[^\n]*?[¥￥]?\s*([0-9?,.�\\uFFFD]+)(?:\s*円|\s*$)',
-        r'合\s*計[^\n]*?[¥￥]?\s*([0-9?,.�\\uFFFD]+)(?:\s*円|\s*$)',
-        r'[¥￥]\s*([0-9?,.�\\uFFFD]+)',
+        # 3桁以上の数字（少額請求）
+        r'\b([1-9][0-9]{2,5})\b',  # 100〜99999の3-6桁の数字
         
         # 金額のみのパターン（最後の手段）
-        r'([0-9]{4,7})'
+        r'\b([0-9]{3,6})\b'  # 単語境界を追加して、IDの一部を拾わないようにする
     ]
     
     # 配列にパターンマッチ結果を保存（優先度、金額、コンテキスト）
@@ -92,8 +120,14 @@ def extract_amount_only(text: str) -> Optional[int]:
             matches = re.finditer(pattern, search_text, re.MULTILINE)
             for match in matches:
                 try:
-                    # カンマや空白を除去して整数変換
-                    amount_str = match.group(1).replace(',', '').replace(' ', '').replace('¥', '')
+                    # 数値文字列を正規化（カンマ・スペース・通貨記号を除去）
+                    amount_str = (match.group(1)
+                                   .replace(',', '')
+                                   .replace(' ', '')
+                                   .replace('\u3000', '')   # 全角スペース
+                                   .replace('¥', '')
+                                   .replace('￥', '')
+                                   .replace('\u00a5', ''))  # FULLWIDTH YEN SIGN
                     
                     # 「?」や「�」が含まれる場合の特殊処理
                     if '?' in amount_str or '�' in amount_str or '\ufffd' in amount_str:
@@ -125,22 +159,95 @@ def extract_amount_only(text: str) -> Optional[int]:
                     if 100 <= amt < 10000000:  # 100円から1000万円まで
                         context = search_text[max(0, match.start() - 40):min(len(search_text), match.end() + 40)]
                         
+                        # 郵便番号や受給者番号などを除外するフィルタリング
+                        # 郵便番号パターン（例: 〒7000804）
+                        if re.search(r'〒\s*[0-9]{3,7}', context):
+                            postal_match = re.search(r'〒\s*([0-9]{3}[-－]?[0-9]{4})', context)
+                            if postal_match and postal_match.group(1).replace('-', '').replace('－', '') == str(amt):
+                                logger.info(f"郵便番号と一致する金額を除外: {amt}")
+                                continue
+                                
+                        # 受給者番号パターン（例: （3000068924））
+                        if re.search(r'[（(][0-9]{7,10}[）)]', context):
+                            recipient_match = re.search(r'[（(]([0-9]{7,10})[）)]', context)
+                            if recipient_match:
+                                recipient_num = recipient_match.group(1)
+                                # 受給者番号の一部が金額と一致する場合も除外
+                                if str(amt) in recipient_num or recipient_num in str(amt):
+                                    logger.info(f"受給者番号と一致する金額を除外: {amt}, 受給者番号: {recipient_num}")
+                                    continue
+                        
+                        # 受給者番号が前後の文脈に含まれる場合も除外
+                        if '受給者' in context and re.search(r'[0-9]{7,10}', context):
+                            for num_match in re.finditer(r'[0-9]{7,10}', context):
+                                if str(amt) in num_match.group(0) or num_match.group(0) in str(amt):
+                                    logger.info(f"受給者関連の番号と一致する金額を除外: {amt}")
+                                    continue
+                                    
+                        # 電話番号パターンと一致する場合も除外
+                        phone_pattern = r'(?:TEL|電話|FAX|ファックス)[：:]?\s*[0-9\-]{10,13}'
+                        if re.search(phone_pattern, context):
+                            phone_match = re.search(r'(?:TEL|電話|FAX|ファックス)[：:]?\s*([0-9\-]{10,13})', context)
+                            if phone_match and phone_match.group(1).replace('-', '') == str(amt):
+                                logger.info(f"電話番号と一致する金額を除外: {amt}")
+                                continue
+                                
+                        # 日付パターンと一致する場合も除外
+                        date_pattern = r'[0-9]{4}[年/\-][0-9]{1,2}[月/\-][0-9]{1,2}日?'
+                        if re.search(date_pattern, context):
+                            date_match = re.search(date_pattern, context)
+                            if date_match and date_match.group(0).replace('年', '').replace('月', '').replace('日', '').replace('/', '').replace('-', '') == str(amt):
+                                logger.info(f"日付と一致する金額を除外: {amt}")
+                                continue
+                        
                         # 優先度を計算（パターンの順序が重要）
                         weight = len(amount_patterns) - priority
                         
                         # 重要なキーワードに基づく優先度調整
                         if 'ご請求額' in context:
-                            weight += 10
+                            weight += 15
                         elif '請求額' in context:
-                            weight += 5
-                        elif '合計' in context:
-                            weight += 3
+                            weight += 12
+                        elif '合計' in context and '合計' in context[max(0, match.start() - 20):match.end() + 20]:
+                            weight += 10  # 合計の優先度を大幅に上げる（ただし近い位置に「合計」がある場合のみ）
                         elif '総額' in context:
-                            weight += 2
+                            weight += 8
+                        elif '金額' in context and '金額' in context[max(0, match.start() - 20):match.end() + 20]:
+                            weight += 7  # 「金額」キーワードが近くにある場合
+                        elif 'お支払' in context:
+                            weight += 6  # 「お支払」キーワードが含まれる場合
+                            
+                        # 通貨記号が含まれる場合は優先度を上げる
+                        if '¥' in context[max(0, match.start() - 5):match.end() + 5] or '￥' in context[max(0, match.start() - 5):match.end() + 5]:
+                            weight += 5  # 通貨記号が近くにある場合
                         
-                        # 金額の大きさも考慮（小さすぎる金額は低優先度）
+                        # 項目名が含まれる場合は優先度を下げる（おやつ、教材費など）
+                        item_keywords = ['おやつ', '教材費', '活動費', '利用者負担額', '交通費']
+                        for keyword in item_keywords:
+                            if keyword in context and '合計' not in context:
+                                weight -= 5  # 項目別金額の優先度を大幅に下げる
+                                
+                        # 郵便番号や受給者番号などの特定パターンを検出して優先度を大幅に下げる
+                        exclude_patterns = [
+                            r'〒\s*[0-9]{3}[-－]?[0-9]{4}',  # 郵便番号
+                            r'[（(][0-9]{7,10}[）)]',        # 受給者番号
+                            r'受給者番号[：:]?\s*[0-9]+',     # 受給者番号（別形式）
+                            r'[0-9]{4}年[0-9]{1,2}月',       # 年月表記
+                            r'[0-9]{1,2}月[0-9]{1,2}日'      # 月日表記
+                        ]
+                        
+                        for pattern in exclude_patterns:
+                            if re.search(pattern, context):
+                                weight -= 8  # 郵便番号などのパターンがある場合は優先度を大幅に下げる
+                        
+                        # 金額の大きさも考慮（小さすぎる金額や端数のない綺麗すぎる金額は優先度調整）
                         if amt < 1000:
                             weight -= 2
+                        
+                        # 請求書の金額は通常端数がある（1000円ぴったりよりも1,080円のような金額が多い）
+                        # 1000円単位の端数がない金額は、郵便番号などの可能性が高いので優先度を下げる
+                        if amt >= 1000 and amt % 1000 == 0 and '合計' not in context[max(0, match.start() - 20):match.end() + 20]:
+                            weight -= 1
                         
                         # 「円」が含まれる場合は優先度を上げる
                         if '円' in context[match.end():match.end()+5]:
@@ -157,240 +264,202 @@ def extract_amount_only(text: str) -> Optional[int]:
         # 優先度でソート（降順）
         found_amounts.sort(key=lambda x: (-x[0], -x[1]))  # 優先度が同じなら金額の大きい方
         
-        print(f"抽出された全金額: {[(amt, weight) for weight, amt, _ in found_amounts]}")
-        print(f"最適な金額: {found_amounts[0][1]}円 (優先度: {found_amounts[0][0]})")
+        logger.info(f"抽出された全金額: {[(amt, weight) for weight, amt, _ in found_amounts[:5]]}")
+        logger.info(f"最適な金額: {found_amounts[0][1]}円 (優先度: {found_amounts[0][0]})")
+        
+        # 代替候補も記録（デバッグ用）
+        if len(found_amounts) > 1:
+            logger.info(f"代替金額候補: {[(amt, weight) for weight, amt, _ in found_amounts[1:3]]}")
         
         # 最も優先度の高い金額を返す
         return found_amounts[0][1]
+    
+    logger.warning("有効な金額が見つかりませんでした")
     return None
 
-def extract_amount_and_customer(text: str) -> Tuple[Optional[int], Optional[str]]:
+def extract_amount_and_customer(text: str, ocr_data=None) -> ExtractionResult:
     """
-    PDFテキストから金額（例: 1000, 1,000, 1000円）と顧客名（例: 名前: 佐藤太郎, 佐藤太郎様）を抽出
-    請求書のレイアウトを考慮し、左上の宣先（顧客名）と右側の請求者を区別する
+    PDFから抽出したテキストから金額と顧客名を抽出する
+    複数の抽出戦略を使用して最適な結果を得る
     """
-    # デバッグ出力
-    print(f"抽出対象テキスト（一部）: {text[:200]}...")
-    print(f"テキスト全体の長さ: {len(text)}文字")
-    
-    # テキストを行ごとに分割して請求書の構造を分析
-    lines = text.split('\n')
-    
-    # 1. デバッグ全行表示
-    for i, line in enumerate(lines[:30]):
-        if line.strip():  # 空行でない場合のみ
-            print(f"行{i+1}: {line}")
-    
-    # 2. 先にサンプル請求書の名前パターン（山口 大輝（山口 大輝）様）を直接探す
-    print("\n*** 顧客名パターンマッチング開始 ***")
-    
-    # 最初に純テキストで山口 大輝のような名前を探す
-    raw_name_pattern = r'(\w{1,2}\s*\w{1,3})'
-    raw_matches = re.finditer(raw_name_pattern, text[:500], re.MULTILINE)
-    for match in raw_matches:
-        name = match.group(1).strip()
-        if re.match(r'[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+\s+[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+', name):
-            print(f"\u2605 生の全角文字名前パターン検出: '{name}'")
-            # これが実際に名前かどうか確認するロジックを追加
-            context = text[max(0, match.start() - 30):min(len(text), match.end() + 30)]
-            print(f"  コンテキスト: '{context}'")
-            
-            # 前後のコンテキストから顧客名である可能性を確認
-            if "様" in context or "宣" in context[:20] or "宣先" in context[:20]:
-                print(f"  → 顧客名である可能性が高いです")
-                amount = extract_amount_only(text)
-                return amount, f"{name}様"
-    
-    # サンプル請求書の形式に隣接するパターンを直接チェック
-    sample_patterns = [
-        # 山口 大輝（山口 大輝）様 的なパターン
-        r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,2}\s*[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,3})\s*(?:\([^)]+\))?\s*様',
+    # 空文字列やNoneの場合は早期リターン
+    if not text:
+        return ExtractionResult(None, None)
         
-        # 姓名の間が空白もしくはなしのパターン
-        r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,2}[ \t]*[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,3})\s*様',
+    # テキストを正規化して読み取り可能な部分を抽出
+    readable_content = extract_readable_content(text)
+    normalized_text = readable_content["text"]
+    
+    # 正規化されたテキストがない場合は元のテキストを使用
+    if not normalized_text:
+        normalized_text = text
         
-        # より柔軟なパターン（姓名の間の空白が必要ない）
-        r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,2}[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,3})\s*様',
-        
-        # 漢字とカタカナの組み合わせにも対応
-        r'([\u4e00-\u9fa5\u3040-\u309f]+[ \t]*[\u30a0-\u30ff]+|[\u30a0-\u30ff]+[ \t]*[\u4e00-\u9fa5\u3040-\u309f]+)\s*様'
-    ]
+    # テキストの正規化（文字化け対策）
+    normalized_text = normalize_text(normalized_text)
     
-    # 全テキストに対してサンプルパターンを適用
-    for pattern in sample_patterns:
-        matches = re.finditer(pattern, text, re.MULTILINE)
-        for match in matches:
-            customer_name = match.group(1).strip()
-            print(f"パターンマッチ: '{pattern}' → '{customer_name}様'")
-            # 見つかった場合は即座にリターン
-            amount = extract_amount_only(text)
-            return amount, f"{customer_name}様"
+    # 正規化後もテキストが空の場合
+    if not normalized_text or normalized_text.strip() == '':
+        # 文字化けテキストから読める部分を抽出
+        readable_content = extract_readable_content(text)
+        if readable_content["readable_ratio"] < 0.3:  # 30%未満しか読めない場合
+            logger.warning(f"テキストの可読率が低すぎます: {readable_content['readable_ratio']:.2f}")
+            return ExtractionResult(customer=None, amount=None)
+        normalized_text = readable_content["text"]
+
+    # 金額の抽出（extract_invoice_amountを使用）
+    amount_result, _ = extract_invoice_amount(normalized_text)
+    amount = amount_result
     
-    # 行ごとに左右のテキストを分割して分析
-    left_side_text = []
+    # 金額が見つからない場合は従来の方法を試す
+    if amount is None:
+        amount = extract_amount_only(normalized_text)
     
-    # 手動で左側の行を抜き出す
-    for i, line in enumerate(lines[:20]):
-        if i < 10:  # 最初の10行は特に重要
-            left_side_text.append(line.strip())
-        elif len(line.strip()) > 0 and len(line.strip()) < 30:  # 長すぎない行のみ抽出
-            # 請求書の左側にある可能性が高いテキストを優先的に取得
-            if not line.strip().startswith("↓"):  # 矢印など特殊文字で始まらない
-                left_side_text.append(line.strip())
+    # 顧客名の抽出
+    customer = extract_customer(normalized_text)
     
-    # 左側テキストを結合
-    left_text = '\n'.join(left_side_text)
-    print(f"\n--- 左側テキスト(顧客対象) ---\n{left_text}")
+    # 追加情報を含む結果を返す
+    context = {
+        "normalized": True,
+        "original_line": "",
+        "amount_extraction_method": "improved_algorithm" if amount_result else "legacy"
+    }
     
-    # 最初に[IMPORTANT]タグがついた重要行を優先的にチェック
-    important_sections = re.findall(r'(.*\[IMPORTANT\].*)', text)
-    print(f"発見された重要セクション: {len(important_sections)}個")
-    for section in important_sections:
-        print(f"\u91cd要セクション: {section}")
-    
-    # 金額抽出の正規表現パターンをさらに強化
-    amount_patterns = [
-        # 請求書でよく使われるキーワードの直後に金額があるパターン
-        r'(?:請求金額|合計金額|御請求額|お支払い金額|合計|金額|総額|氏名)\s*[:：]?\s*(?:¥|￥)?\s*([0-9,.]+)(?:\s*円|\s*$)',
-        
-        # 表の「合計」行にある金額のパターン
-        r'\b合\s*計\b[^\n]*?([0-9,.]+)(?:\s*円|\s*$)',
-        
-        # 金額表記の単純パターン
-        r'(?:¥|￥)\s*([0-9,.]+)(?:\s*円|\s*$)',
-        r'([0-9,.]+)\s*円',
-        
-        # 特殊な表記に対応（円表記がない場合など）
-        r'(?:[金支請])(?:[\s:：]*)(\d[0-9,.\s]+)(?:\s*$|\s+[^0-9])',
-        
-        # 金額のみの行（レイアウトで金額が単独行にある場合）
-        r'^\s*([0-9,.]+)\s*円\s*$'
-    ]
-    
-    # 重要セクションから優先的に抽出を試みる
-    amount = None
-    
-    # 重要セクションから先に抽出を試みる
-    for section in important_sections:
-        for pattern in amount_patterns:
-            amount_match = re.search(pattern, section, re.IGNORECASE | re.MULTILINE)
-            if amount_match:
-                try:
-                    # 数字以外の文字を削除して整数に変換
-                    amount_str = amount_match.group(1).replace(',', '').replace('.', '').replace(' ', '').strip()
-                    amount = int(amount_str)
-                    print(f"重要セクションからの金額抽出成功 - パターン: {pattern}")
-                    print(f"抽出された金額: {amount}円")
-                    return amount, extract_customer(text)  # 重要セクションから抽出できた場合は信頼性が高いのですぐに返す
-                except ValueError:
-                    continue
-    
-    # テキスト全体から金額を抽出
-    found_amounts = []
-    
-    for pattern in amount_patterns:
-        matches = re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE)
-        for match in matches:
-            try:
-                amount_str = match.group(1).replace(',', '').replace('.', '').replace(' ', '').strip()
-                amt = int(amount_str)
-                # 合理的な金額のみを考慮 (100円以上100万円未満を想定)
-                if 100 <= amt < 1000000:
-                    context = text[max(0, match.start() - 30):min(len(text), match.end() + 30)]
-                    weight = 1
-                    
-                    # 優先度を計算 (「合計」や「請求金額」などの重要キーワードが含まれているか)
-                    for keyword in ["請求金額", "合計金額", "御請求額", "お支払い金額", "合計", "総額"]:
-                        if keyword in context:
-                            weight += 2
-                    
-                    found_amounts.append((amt, weight, context))
-            except ValueError:
-                continue
-    
-    # 重要度（重み）に基づいて金額をソート
-    found_amounts.sort(key=lambda x: (-x[1], -x[0]))  # 重要度が高く、かつ金額が大きい順
-    
-    if found_amounts:
-        amount = found_amounts[0][0]  # 最も可能性の高い金額を選択
-        print(f"最終的な金額抽出結果: {amount}円 (重要度: {found_amounts[0][1]})")
-        print(f"金額のコンテキスト: {found_amounts[0][2]}")
-        
-        # 候補金額を表示
-        if len(found_amounts) > 1:
-            print("他の候補金額:")
-            for i, (amt, weight, context) in enumerate(found_amounts[1:5]):
-                print(f"  {i+1}. {amt}円 (重要度: {weight})")
-    
-    # 顧客名は別関数で抽出
-    customer = extract_customer(text)
-    
-    return amount, customer
+    return ExtractionResult(customer=customer, amount=amount, context=context) if amount is not None else None
 
 def extract_customer(text: str) -> Optional[str]:
     """
     PDFテキストから顧客名（宛先）を抽出する特化関数
     左上に書かれているフルネームを優先的に抽出し、「様」を付ける
-    請求書の左側にある情報から宛先を抽出し、右側の請求者情報と区別する
     """
-    # テキストを行ごとに分割して左右の情報を区別
-    lines = text.split('\n')
-    left_side_text = []
+    # テキストが空の場合は None を返す
+    if not text:
+        return None
     
-    # 請求書の左側部分のみを抽出（顧客情報を含む）
-    for line in lines[:20]:  # 最初の20行に限定
-        line = line.strip()
-        if not line:  # 空行はスキップ
-            continue
-            
-        # 簡易的な判定: 行の前半分を左側として抽出
-        mid_point = len(line) // 2
-        if len(line) > 10:  # 十分な長さがある行のみ対象
-            left_side_text.append(line[:mid_point].strip())
-        else:
-            # 短い行は全体を左側に含める
-            left_side_text.append(line)
+    # デバッグ情報を追加
+    print(f"\n===== 顧客名抽出処理開始 =====\n")
+    print(f"元のテキスト長: {len(text)} 文字")
+        
+    # 文字化けしているテキストから読みやすい部分を抽出
+    readable_data = extract_readable_content(text)
+    if readable_data["readable_ratio"] < 0.5:  # 読める文字が50%未満の場合
+        # 読み取り可能な部分だけを使用
+        text = readable_data["text"]
+        print(f"読み取り可能な部分のみ使用: {len(text)} 文字")
+    else:
+        # 読み取り可能な割合が高い場合は正規化だけ行う
+        text = normalize_text(text)
+        print(f"正規化したテキスト: {len(text)} 文字")
     
-    # 左側テキストを結合
-    left_text = '\n'.join(left_side_text)
-    print(f"PDF左上部分（顧客名抽出用）: {left_text[:200]}...")
-    
-    # 重要セクションから顧客名を優先的に抽出
-    important_sections = re.findall(r'(.*\[IMPORTANT\].*)', text)
-    
-    # 顧客名抽出のより詳細なパターン
-    # サンプル請求書の形式に合わせてパターン追加
-    name_patterns = [
-        # 「姓名 (姓名) 様」形式 - サンプル請求書で確認された形式
-        r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+\s*[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+)\s*(?:\(\s*[^\)]+\))?\s*様',
-        
-        # 左上にある可能性が高いフルネームのパターン
-        r'^\s*([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,10}\s*[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{1,10})\s*(?:様)?\s*$',  # フルネーム(姓名)
-        
-        # 行の先頭にある名前パターン
-        r'^\s*([^・･“”メ■→\d\(\)\[\]\{\}]{2,20})\s*(?:様)?\s*$',
-        
-        # 「様」が付くパターン
-        r'([^\s]{2,20})\s*様',
-        
-        # 住所の直前にある可能性が高い名前
-        r'([^・･“”メ■→\d\n\(\)\[\]\{\}\s]{2,15})(?:様)?(?:\s+御中|御中|\s*、\s*ご住所|ご住所)',
-        
-        # 請求先や顧客名を示すフィールドの後に客名が来るパターン
-        r'(?:請求先|客様名|顧客名|氏名|名称|宛名|\b宛\b)[^\n:]*[:|：|\s]\s*([^\n\d]{2,30}?)(?:\s|$|様)'
+    # 金額関連の用語リスト - 顧客名として無効な用語
+    invalid_customer_terms = [
+        '合計', '小計', '総額', '総額計', '金額', '請求額', 
+        '請求金額', '請求合計', '小計額', '税込', '税込み',
+        '税抜', '税抜き', '消費税', '消費税等', '合計額',
+        '合計金額', '小計金額', '税込合計', '税抜合計',
+        '合計欄', '小計欄', '金額欄', '請求欄', '合計額欄',
+        '小計額欄', '総額欄', '総額額', '合計額金額',
+        '合計金', '小計金', '総額金', '請求金', '請求書',
+        '領収書', '領収書合計', '領収書金額', '領収書額',
+        '請求書合計', '請求書金額', '請求書額', '小計欄金額',
+        '御請求額', '御請求金額', '御合計', '御合計額'
     ]
     
-    # 左上部分の各行を調査
-    for i, line in enumerate(left_side_text):
-        # サンプル請求書形式に合わせて優先的にチェックするパターン
-        # 「姓名 (姓名) 様」形式を優先
+    # 「合計」を含む行を完全に除外するための前処理
+    filtered_text = "\n".join([line for line in text.split('\n') if '合計' not in line])
+    print(f"「合計」を含む行を除外したテキスト: {len(filtered_text)} 文字")
+    
+    # 顧客名を抽出するための候補リスト
+    customer_candidates = []
+    
+    # 「客様」「顧客」「宛名」などのキーワードの後に続く名前を抽出
+    customer_field_patterns = [
+        r'(?:お客様|顧客|お名前|氏名|宛名)[\s:：]*([^\n\d\s]{2,15})(?:様)?',
+        r'(?:宛先|請求先)[\s:：]*([^\n\d\s]{2,15})(?:様)?',
+    ]
+    
+    for pattern in customer_field_patterns:
+        matches = re.finditer(pattern, filtered_text)
+        for match in matches:
+            name = match.group(1).strip()
+            if is_valid_customer_name(name, invalid_customer_terms):
+                context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
+                print(f"顧客フィールドから抽出: '{name}' (コンテキスト: '{context}')")
+                customer_candidates.append((3, name))  # 優先度3（高）
+    
+    # 「様」が付く名前を抽出
+    sama_pattern = r'([^\s\d]{2,15})様'
+    for match in re.finditer(sama_pattern, filtered_text):
+        name = match.group(1).strip()
+        if is_valid_customer_name(name, invalid_customer_terms):
+            context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
+            print(f"「様」付きから抽出: '{name}' (コンテキスト: '{context}')")
+            customer_candidates.append((2, name))  # 優先度2（中）
+    
+    # 文書の最初の20行から日本語名を抽出
+    lines = filtered_text.split('\n')[:20]  # 最初の20行のみ
+    for i, line in enumerate(lines):
+        # 行の内容をデバッグ表示
+        print(f"行{i+1}: {line}")
+        
+        # 金額関連の用語を含む行はスキップ
+        if any(term in line for term in invalid_customer_terms):
+            print(f"  → 金額関連の用語を含む行なのでスキップ: {line}")
+            continue
+        
+        # 日本語名のパターン（漢字・ひらがな・カタカナの連続）
+        japanese_name_pattern = r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]{2,15})'
+        for match in re.finditer(japanese_name_pattern, line):
+            name = match.group(1).strip()
+            if is_valid_customer_name(name, invalid_customer_terms):
+                print(f"日本語名から抽出: '{name}' (行{i+1})")
+                customer_candidates.append((1, name))  # 優先度1（低）
+    
+    # 候補がない場合はNoneを返す
+    if not customer_candidates:
+        print("有効な顧客名が見つかりませんでした")
+        return None
+    
+    # 優先度順にソート
+    customer_candidates.sort(reverse=True)
+    best_candidate = customer_candidates[0][1]
+    
+    # 「様」が含まれていない場合は追加
+    if "様" not in best_candidate:
+        best_candidate += "様"
+    
+    print(f"\n最終的な顧客名: {best_candidate}\n")
+    return best_candidate
+
+    # 左上から顧客名を抽出
+    for i, line in enumerate(lines[:20]):
+        # 行の内容をデバッグ表示
+        print(f"\u884c{i+1}: {line}")
+
+        # まず、この行が金額関連の用語を含むかチェック
+        contains_invalid_term = False
+        for term in invalid_customer_terms:
+            if term in line:
+                print(f"  → 金額関連の用語 '{term}' を含む行なのでスキップ")
+                contains_invalid_term = True
+                break
+
+        if contains_invalid_term:
+            continue
+
+        # サンプル請求書形式のパターンをチェック
         sample_pattern = r'([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+\s*[\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff]+)\s*(?:\(\s*[^\)]+\))?\s*様'
         name_match = re.search(sample_pattern, line, re.IGNORECASE)
         if name_match:
             customer = name_match.group(1).strip()
-            print(f"対象請求書形式から顧客名抽出成功({i+1}行目): {customer}様")
-            return f"{customer}様"
-        
+
+            # 顧客名の有効性チェック
+            if is_valid_customer_name(customer, invalid_customer_terms):
+                print(f"\u2705 対象請求書形式から顧客名抽出成功({i+1}行目): {customer}様")
+                return f"{customer}様"
+            else:
+                print(f"\u274c 無効な顧客名をスキップ: {customer}")
+                continue
+
         # その他のパターンもチェック
         for j, pattern in enumerate(name_patterns):
             name_match = re.search(pattern, line, re.IGNORECASE)
@@ -398,15 +467,18 @@ def extract_customer(text: str) -> Optional[str]:
                 customer = name_match.group(1).strip()
                 # 文字列整形
                 customer = customer.replace('\n', '').replace('\r', '')
-                
-                # 無効な文字を除去、最低長もチェック
-                if len(customer) > 2 and any(c.isalpha() for c in customer):
-                    print(f"左上部分({i+1}行目)から顧客名抽出: {customer} (パターン{j+1})")
-                    
+
+                # 「請求」という文字を除去
+                customer = customer.replace('請求', '')
+
+                # 顧客名の有効性チェック
+                if is_valid_customer_name(customer, invalid_customer_terms):
+                    print(f"\u2705 左上部分({i+1}行目)から顧客名抽出: {customer} (パターン{j+1})")
+
                     # 「様」が含まれていない場合は追加
                     if "様" not in customer:
                         customer += "様"
-                    
+
                     return customer
     
     # 左上から抽出できなかった場合は、重要セクションをチェック
@@ -418,8 +490,11 @@ def extract_customer(text: str) -> Optional[str]:
                 # 文字列整形
                 customer = customer.replace('\n', '').replace('\r', '')
                 
-                # 無効な文字を除去
-                if len(customer) > 0 and any(c.isalpha() for c in customer):
+                # 「請求」という文字を除去
+                customer = customer.replace('請求', '')
+                
+                # 顧客名の有効性チェック
+                if is_valid_customer_name(customer, invalid_customer_terms):
                     print(f"重要セクションから顧客名抽出: {customer}")
                     
                     # 「様」が含まれていない場合は追加

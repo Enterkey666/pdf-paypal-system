@@ -69,18 +69,55 @@ def clear_cache():
 
 # 必要なモジュールをインポート
 # ローカルモジュールのインポート
-import customer_extractor
-logger.info("カレントディレクトリがPYTHONPATHに追加され、customer_extractorをインポートしました")
+try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+        logger.info(f"sys.pathに追加しました: {current_dir}")
+    
+    # モジュールパスを表示（デバッグ用）
+    logger.info(f"Python path: {sys.path}")
+    logger.info(f"現在のディレクトリ内のファイル: {os.listdir(current_dir)}")
+    
+    import customer_extractor
+    logger.info("customer_extractorモジュールのインポートに成功しました")
+except ImportError as e:
+    logger.error(f"customer_extractorモジュールのインポートに失敗: {e}")
+    # フォールバック処理
+    # customer_extractor.pyファイルを直接読み込む
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "customer_extractor", 
+            os.path.join(current_dir, "customer_extractor.py")
+        )
+        customer_extractor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(customer_extractor)
+        logger.info("customer_extractorモジュールを代替方法でインポートしました")
+    except Exception as e2:
+        logger.error(f"customer_extractorモジュールの代替インポートにも失敗: {e2}")
 
 # モジュールの再読み込みを強制する関数
 def reload_modules():
     try:
-        # customer_extractorモジュールを再読み込み
-        import importlib
-        importlib.reload(customer_extractor)
-        logger.info("customer_extractorモジュールを再読み込みしました")
+        # customer_extractorモジュールが正しくインポートされているか確認
+        if 'customer_extractor' in sys.modules:
+            import importlib
+            importlib.reload(customer_extractor)
+            logger.info("customer_extractorモジュールを再読み込みしました")
+        else:
+            logger.warning("customer_extractorモジュールがインポートされていないため、再読み込みをスキップします")
+            # モジュールを再インポートしてみる
+            try:
+                import customer_extractor
+                logger.info("customer_extractorモジュールを再インポートしました")
+            except ImportError as e:
+                logger.error(f"customer_extractorモジュールの再インポートに失敗: {e}")
     except Exception as e:
         logger.error(f"モジュールの再読み込みエラー: {e}")
+        logger.error(f"sys.modules内のモジュール: {list(sys.modules.keys())}")
+        # エラーが発生してもアプリケーションは続行
 
 import requests
 import shutil
@@ -365,7 +402,30 @@ def save_config(config):
         return False
 # customer_extractorモジュールからCustomerExtractorクラスではなく関数をインポート
 # ローカルモジュールのインポート
-import amount_extractor
+try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+        logger.info(f"sys.pathに追加しました: {current_dir}")
+    
+    # amount_extractorモジュールをインポート
+    import amount_extractor
+    logger.info("amount_extractorモジュールのインポートに成功しました")
+except ImportError as e:
+    logger.error(f"amount_extractorモジュールのインポートに失敗: {e}")
+    # フォールバック処理
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "amount_extractor", 
+            os.path.join(current_dir, "amount_extractor.py")
+        )
+        amount_extractor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(amount_extractor)
+        logger.info("amount_extractorモジュールを代替方法でインポートしました")
+    except Exception as e2:
+        logger.error(f"amount_extractorモジュールの代替インポートにも失敗: {e2}")
 
 # 追加のPDF処理ライブラリをインポート
 try:
@@ -472,45 +532,208 @@ def fix_numeric_encoding(text):
 # extractors.pyの関数をインポート
 # extractorsモジュールのインポートを試みる（オプション）
 try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+        logger.info(f"sys.pathに追加しました: {current_dir}")
+    
     # ローカルモジュールのインポート
     from extractors import extract_text_from_pdf, extract_amount_only
     from extractors import ExtractionResult
     logger.info("extractorsモジュールを正常に読み込みました。")
     ENHANCED_OCR_AVAILABLE = True
     logger.info("拡張OCRモジュールを読み込みました")
-except ImportError:
+except ImportError as e:
+    logger.error(f"extractorsモジュールのインポートに失敗: {e}")
     ENHANCED_OCR_AVAILABLE = False
+    
+    # フォールバック処理
+    try:
+        # extractors.pyファイルが存在するか確認
+        extractors_path = os.path.join(current_dir, "extractors.py")
+        if os.path.exists(extractors_path):
+            logger.info(f"extractors.pyファイルが見つかりました: {extractors_path}")
+            
+            # 直接インポートを試みる
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("extractors", extractors_path)
+            extractors = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(extractors)
+            
+            # 必要な関数を取得
+            extract_text_from_pdf = extractors.extract_text_from_pdf
+            extract_amount_only = extractors.extract_amount_only
+            ExtractionResult = extractors.ExtractionResult
+            
+            logger.info("extractorsモジュールを代替方法でインポートしました")
+            ENHANCED_OCR_AVAILABLE = True
+        else:
+            logger.error(f"extractors.pyファイルが見つかりません: {extractors_path}")
+    except Exception as e2:
+        logger.error(f"extractorsモジュールの代替インポートにも失敗: {e2}")
     logger.warning("拡張OCRモジュールが見つかりません。基本的なOCR機能のみ使用します。")
 
 # AI OCR機能のインポート
 try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
     # ローカルモジュールのインポート
     from ai_ocr import process_pdf_with_ai_ocr
     AI_OCR_AVAILABLE = True
     logger.info("AI OCRモジュールを読み込みました")
-except ImportError:
+except ImportError as e:
+    logger.error(f"AI OCRモジュールのインポートに失敗: {e}")
     AI_OCR_AVAILABLE = False
-    logger.warning("AI OCRモジュールが見つかりません。AI OCR機能は無効です。")
+    
+    # フォールバック処理
+    try:
+        # ai_ocr.pyファイルが存在するか確認
+        ai_ocr_path = os.path.join(current_dir, "ai_ocr.py")
+        if os.path.exists(ai_ocr_path):
+            logger.info(f"ai_ocr.pyファイルが見つかりました: {ai_ocr_path}")
+            
+            # 直接インポートを試みる
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("ai_ocr", ai_ocr_path)
+            ai_ocr = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ai_ocr)
+            
+            # 必要な関数を取得
+            process_pdf_with_ai_ocr = ai_ocr.process_pdf_with_ai_ocr
+            
+            logger.info("ai_ocrモジュールを代替方法でインポートしました")
+            AI_OCR_AVAILABLE = True
+        else:
+            logger.warning("AI OCRモジュールが見つかりません。AI OCR機能は無効です。")
+    except Exception as e2:
+        logger.error(f"ai_ocrモジュールの代替インポートにも失敗: {e2}")
+        logger.warning("AI OCRモジュールが見つかりません。AI OCR機能は無効です。")
 
 try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
     # ローカルモジュールのインポート
     from template_matching import TemplateManager, process_pdf_with_template_matching
     TEMPLATE_MATCHING_AVAILABLE = True
     logger.info("テンプレートマッチングモジュールを読み込みました")
+except ImportError as e:
+    logger.error(f"テンプレートマッチングモジュールのインポートに失敗: {e}")
+    TEMPLATE_MATCHING_AVAILABLE = False
+    
+    # フォールバック処理
+    try:
+        # template_matching.pyファイルが存在するか確認
+        template_matching_path = os.path.join(current_dir, "template_matching.py")
+        if os.path.exists(template_matching_path):
+            logger.info(f"template_matching.pyファイルが見つかりました: {template_matching_path}")
+            
+            # 直接インポートを試みる
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("template_matching", template_matching_path)
+            template_matching = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(template_matching)
+            
+            # 必要な関数とクラスを取得
+            TemplateManager = template_matching.TemplateManager
+            process_pdf_with_template_matching = template_matching.process_pdf_with_template_matching
+            
+            logger.info("テンプレートマッチングモジュールを代替方法でインポートしました")
+            TEMPLATE_MATCHING_AVAILABLE = True
+        else:
+            logger.warning("テンプレートマッチングモジュールが見つかりません。テンプレートマッチング機能は無効です。")
+    except Exception as e2:
+        logger.error(f"テンプレートマッチングモジュールの代替インポートにも失敗: {e2}")
 except ImportError:
     TEMPLATE_MATCHING_AVAILABLE = False
     logger.warning("テンプレートマッチングモジュールが見つかりません。テンプレート機能は無効です。")
 
 try:
+    # カレントディレクトリを再確認（デプロイ環境用）
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+        logger.info(f"sys.pathに追加しました: {current_dir}")
+    
     # ローカルモジュールのインポート
     from interactive_correction import setup_interactive_correction_routes
     from interactive_correction import CorrectionHistory, LearningData
+    
+    # ディレクトリの設定
     history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'correction_history')
     data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'learning_data')
     os.makedirs(history_dir, exist_ok=True)
     os.makedirs(data_dir, exist_ok=True)
+    
+    # クラスのインスタンス化
     correction_history = CorrectionHistory(history_dir)
     learning_data = LearningData(data_dir)
+    
+    logger.info("interactive_correctionモジュールを正常に読み込みました")
+except ImportError as e:
+    logger.error(f"interactive_correctionモジュールのインポートに失敗: {e}")
+    
+    # フォールバック処理
+    try:
+        # interactive_correction.pyファイルが存在するか確認
+        interactive_correction_path = os.path.join(current_dir, "interactive_correction.py")
+        if os.path.exists(interactive_correction_path):
+            logger.info(f"interactive_correction.pyファイルが見つかりました: {interactive_correction_path}")
+            
+            # 直接インポートを試みる
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("interactive_correction", interactive_correction_path)
+            interactive_correction = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(interactive_correction)
+            
+            # 必要な関数とクラスを取得
+            setup_interactive_correction_routes = interactive_correction.setup_interactive_correction_routes
+            CorrectionHistory = interactive_correction.CorrectionHistory
+            LearningData = interactive_correction.LearningData
+            
+            # ディレクトリの設定
+            history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'correction_history')
+            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'learning_data')
+            os.makedirs(history_dir, exist_ok=True)
+            os.makedirs(data_dir, exist_ok=True)
+            
+            # クラスのインスタンス化
+            correction_history = CorrectionHistory(history_dir)
+            learning_data = LearningData(data_dir)
+            
+            logger.info("interactive_correctionモジュールを代替方法でインポートしました")
+        else:
+            logger.error(f"interactive_correction.pyファイルが見つかりません: {interactive_correction_path}")
+            # ダミーの関数とクラスを作成してエラーを回避
+            class DummyCorrectionHistory:
+                def __init__(self, directory):
+                    self.directory = directory
+                def add_correction(self, *args, **kwargs):
+                    logger.warning("ダミーの修正履歴追加関数が呼ばれました")
+            
+            class DummyLearningData:
+                def __init__(self, directory):
+                    self.directory = directory
+                def add_correction(self, *args, **kwargs):
+                    logger.warning("ダミーの学習データ追加関数が呼ばれました")
+                def get_correction_suggestions(self, *args, **kwargs):
+                    return []
+            
+            def dummy_setup_routes(app):
+                logger.warning("ダミーのルート設定関数が呼ばれました")
+            
+            # ダミー関数を設定
+            setup_interactive_correction_routes = dummy_setup_routes
+            correction_history = DummyCorrectionHistory(os.path.join(current_dir, 'data', 'correction_history'))
+            learning_data = DummyLearningData(os.path.join(current_dir, 'data', 'learning_data'))
+    except Exception as e2:
+        logger.error(f"interactive_correctionモジュールの代替インポートにも失敗: {e2}")
     
     # クラスメソッドをグローバル関数として使えるようにする
     def get_correction_suggestions(customer, amount):

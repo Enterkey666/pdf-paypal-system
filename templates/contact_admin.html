@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}管理者に連絡{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg animate__animated animate__fadeIn">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="bi bi-envelope-fill me-2"></i>管理者に連絡する</h4>
+                </div>
+                <div class="card-body p-4">
+                    <div class="text-center mb-4">
+                        <div class="display-1 text-primary mb-3">
+                            <i class="bi bi-chat-dots"></i>
+                        </div>
+                        <h2 class="mb-3">有料会員登録や問い合わせ</h2>
+                        <p class="lead text-muted">有料会員登録や技術的な質問など、お気軽にお問い合わせください。</p>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-info-circle-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>有料会員について</h5>
+                                <p class="mb-0">
+                                    有料会員になると、本番モードでの設定ページへのアクセスや外部APIの使用が可能になります。
+                                    詳細は<a href="{{ url_for('membership_info') }}" class="alert-link">有料会員情報ページ</a>をご覧ください。
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form id="contactForm" class="mt-4">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">お名前</label>
+                            <input type="text" class="form-control" id="name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="email" class="form-label">メールアドレス</label>
+                            <input type="email" class="form-control" id="email" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="subject" class="form-label">件名</label>
+                            <select class="form-select" id="subject" required>
+                                <option value="" selected disabled>選択してください</option>
+                                <option value="membership">有料会員登録について</option>
+                                <option value="technical">技術的な質問</option>
+                                <option value="feedback">フィードバック</option>
+                                <option value="other">その他</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="message" class="form-label">メッセージ</label>
+                            <textarea class="form-control" id="message" rows="5" required></textarea>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="button" class="btn btn-primary btn-lg" onclick="sendEmail()">
+                                <i class="bi bi-send me-2"></i>送信する
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="alert alert-success mt-4 d-none" id="successMessage">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-check-circle-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>送信完了</h5>
+                                <p class="mb-0">メッセージが送信されました。管理者からの返信をお待ちください。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-danger mt-4 d-none" id="errorMessage">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-exclamation-triangle-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>エラー</h5>
+                                <p class="mb-0">メッセージの送信に失敗しました。以下のメールアドレスに直接お問い合わせください。</p>
+                                <p class="mb-0 mt-2"><strong>{{ admin_email }}</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-light text-center py-3">
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-2"></i>ホームに戻る
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function sendEmail() {
+    // フォームデータの取得
+    const name = document.getElementById('name').value;
+    const email = document.getElementById('email').value;
+    const subject = document.getElementById('subject').value;
+    const message = document.getElementById('message').value;
+    
+    // 入力チェック
+    if (!name || !email || !subject || !message) {
+        alert('すべての項目を入力してください');
+        return;
+    }
+    
+    // メールクライアントを開く
+    const subjectText = `[PDF PayPal System] ${document.getElementById('subject').options[document.getElementById('subject').selectedIndex].text}`;
+    const bodyText = `名前: ${name}\nメールアドレス: ${email}\n\n${message}`;
+    const mailtoUrl = `mailto:{{ admin_email }}?subject=${encodeURIComponent(subjectText)}&body=${encodeURIComponent(bodyText)}`;
+    
+    // 新しいウィンドウでメールクライアントを開く
+    window.open(mailtoUrl);
+    
+    // 成功メッセージを表示
+    document.getElementById('successMessage').classList.remove('d-none');
+    document.getElementById('contactForm').reset();
+    
+    // 5秒後に成功メッセージを非表示
+    setTimeout(() => {
+        document.getElementById('successMessage').classList.add('d-none');
+    }, 5000);
+}
+</script>
+{% endblock %}
