@@ -6,9 +6,18 @@
 PDFファイルから顧客情報と金額を抽出し、PayPal決済リンクを生成するシステム
 """
 
+# 最初にシステムパスを設定
 import os
-import re
 import sys
+
+# カレントディレクトリをPYTHONPATHに追加（デプロイ環境用）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+    # print(f"Added {current_dir} to sys.path")
+
+# その他の標準ライブラリをインポート
+import re
 import json
 import PyPDF2
 import uuid
@@ -59,13 +68,9 @@ def clear_cache():
     logger.info("処理キャッシュをクリアしました")
 
 # 必要なモジュールをインポート
-# カレントディレクトリをPYTHONPATHに追加（デプロイ環境用）
-if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    logger.info("カレントディレクトリをPYTHONPATHに追加しました")
-
 # ローカルモジュールのインポート
 import customer_extractor
+logger.info("カレントディレクトリがPYTHONPATHに追加され、customer_extractorをインポートしました")
 
 # モジュールの再読み込みを強制する関数
 def reload_modules():
