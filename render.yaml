@@ -16,9 +16,42 @@ services:
         value: "true"
       - key: FLASK_DEBUG
         value: "false"
+      - key: RENDER
+        value: "true"
+      # セッション関連の環境変数
+      - key: SESSION_TYPE
+        value: "filesystem"
+      - key: SESSION_USE_SIGNER
+        value: "true"
+      - key: SESSION_PERMANENT
+        value: "true"
+      - key: PERMANENT_SESSION_LIFETIME
+        value: "604800"  # 7日間
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_HTTPONLY
+        value: "true"
+      - key: SESSION_COOKIE_SAMESITE
+        value: "Lax"
+      # CSRF関連の環境変数
+      - key: WTF_CSRF_ENABLED
+        value: "true"
+      - key: WTF_CSRF_SSL_STRICT
+        value: "false"
+      # PayPal関連の環境変数
       - key: PAYPAL_MODE
         sync: false
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # 管理者認証情報
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # アプリのシークレットキー
+      - key: SECRET_KEY
+        sync: false
+      - key: CSRF_SECRET_KEY
         sync: false

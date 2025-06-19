@@ -44,4 +44,4 @@ if __name__ == "__main__":
     debug_mode = args.debug or os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
     print(f"アプリ起動: host={host}, port={port}, debug={debug_mode}")
-    app.run(debug=debug_mode, host=host, port=port)
+    app.run(host=host, port=port, debug=debug_mode)

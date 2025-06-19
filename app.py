@@ -189,69 +189,79 @@ load_dotenv()
 app = Flask(__name__)
 
 # セッション管理のためのシークレットキー設定
-app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key_here')
-app.logger.info(f"シークレットキー設定完了: {app.secret_key[:5]}...")
+# 環境変数からシークレットキーを取得するか、ランダムに生成
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+# バイナリの場合は表示方法を変更
+if isinstance(app.secret_key, str):
+    key_display = app.secret_key[:5]
+else:
+    key_display = '(バイナリ)'
+app.logger.info(f"シークレットキー設定完了: {key_display}")
 
 # CSRF保護の設定
 app.config['WTF_CSRF_ENABLED'] = True
-app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', 'csrf_secret_key')
+# CSRFシークレットキーは環境変数から取得するか、アプリのシークレットキーを使用
+app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret_key)
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でのテストを可能に
+app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']  # CSRFチェック対象のHTTPメソッド
 
 # セッションの設定
-app.config['SESSION_COOKIE_NAME'] = 'pdf_paypal_session'  # セッションCookieの名前を明示的に指定
-app.config['SESSION_COOKIE_SECURE'] = False  # 開発環境ではHTTPSを使用しないのでFalseに設定
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_PATH'] = '/'  # Cookieのパスを明示的に指定
+app.config['SESSION_TYPE'] = 'filesystem'  # ファイルシステムベースのセッション
+app.config['SESSION_PERMANENT'] = True  # 永続的なセッション
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)  # セッションの有効期限
+app.config['SESSION_COOKIE_NAME'] = 'pdf_paypal_session'  # セッションCookie名
+app.config['SESSION_COOKIE_SECURE'] = False  # 開発環境では無効化
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScriptからのアクセスを禁止
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # クロスサイトリクエスト制限
+app.config['SESSION_USE_SIGNER'] = True  # セッション署名を有効化
 app.config['SESSION_COOKIE_DOMAIN'] = None  # ローカル開発環境用
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # SameSite属性を設定
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)  # セッションの有効期限（1時間）
-app.config['SESSION_USE_SIGNER'] = True  # セッションの署名を有効化
-app.config['SESSION_TYPE'] = 'filesystem'  # セッションをファイルシステムに保存
-app.config['SESSION_FILE_DIR'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'flask_session')
+
+# Render環境では一時ディレクトリを使用する
+if os.environ.get('RENDER', 'false').lower() == 'true' or os.environ.get('USE_TEMP_DIR', 'false').lower() == 'true':
+    app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
+    app.logger.info(f"Render環境または一時ディレクトリ指定のため、セッションディレクトリを一時ディレクトリに設定: {app.config['SESSION_FILE_DIR']}")
+else:
+    # 通常の環境ではアプリケーションディレクトリ内のflask_sessionを使用
+    app.config['SESSION_FILE_DIR'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'flask_session')
+    
+    # セッションディレクトリの作成と権限チェック
+    try:
+        os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+        app.logger.info(f"セッションディレクトリを確認: {app.config['SESSION_FILE_DIR']}")
+        
+        # 書き込み権限のテスト
+        test_file = os.path.join(app.config['SESSION_FILE_DIR'], '.session_test')
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        app.logger.info("セッションディレクトリの書き込み権限を確認しました")
+    except Exception as e:
+        app.logger.error(f"セッションディレクトリの作成または権限テストに失敗しました: {e}")
+        app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
+        app.logger.info(f"一時ディレクトリに変更しました: {app.config['SESSION_FILE_DIR']}")
+
 app.config['SESSION_FILE_THRESHOLD'] = 500  # 最大セッションファイル数
 app.config['SESSION_KEY_PREFIX'] = 'pdf_paypal_'  # セッションキーのプレフィックス
 
-# セッションディレクトリを確実に作成
-try:
-    os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
-    app.logger.info(f"セッションディレクトリを確認: {app.config['SESSION_FILE_DIR']}")
-    if not os.access(app.config['SESSION_FILE_DIR'], os.W_OK):
-        app.logger.warning(f"セッションディレクトリに書き込み権限がありません: {app.config['SESSION_FILE_DIR']}")
-        app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
-        app.logger.info(f"一時ディレクトリに変更しました: {app.config['SESSION_FILE_DIR']}")
-        os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
-except Exception as e:
-    app.logger.error(f"セッションディレクトリ作成エラー: {str(e)}")
-    app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
-    app.logger.info(f"一時ディレクトリに変更しました: {app.config['SESSION_FILE_DIR']}")
+# Flask-WTFのCSRF設定
+app.config['WTF_CSRF_ENABLED'] = True
+app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret_key)
+app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でも動作するように
+app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']
+app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # 1時間
+app.logger.info("CSRF設定を構成しました")
 
-# Flask-Sessionの初期化
+# Flask-Sessionの初期化（CSRFの前に初期化）
 session_interface = Session(app)
 app.logger.info("セッション管理の初期化完了")
 app.logger.info(f"セッションインターフェース: {type(session_interface).__name__}")
 app.logger.info(f"セッション設定: {app.config.get('SESSION_TYPE')}")
 
-# CSRF保護の設定
-app.config['WTF_CSRF_ENABLED'] = True
-app.config['WTF_CSRF_SECRET_KEY'] = app.secret_key  # 同じキーを使用
-app.config['WTF_CSRF_TIME_LIMIT'] = 3600
-app.config['WTF_CSRF_SSL_STRICT'] = False  # HTTPSチェックを無効化（開発環境用）
-app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # デフォルトのCSRFチェックを無効化（カスタム処理用）
-
-# CSRF保護の初期化
+# CSRF保護の初期化（セッションの後に初期化）
 csrf = CSRFProtect(app)
-
-# セッションディレクトリの作成を確認
-if not os.path.exists(app.config['SESSION_FILE_DIR']):
-    try:
-        os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
-        logger.info(f"セッションディレクトリを作成しました: {app.config['SESSION_FILE_DIR']}")
-    except Exception as e:
-        logger.error(f"セッションディレクトリの作成に失敗しました: {e}")
-        # フォールバックとして一時ディレクトリを使用
-        app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
-        logger.info(f"フォールバックセッションディレクトリ: {app.config['SESSION_FILE_DIR']}")
-
+app.logger.info("CSRF保護を初期化しました")
+app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
+app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
 # paypal_utils.pyからの関数インポート
 # ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
@@ -1035,7 +1045,11 @@ def create_app():
     # アプリ起動時にキャッシュをクリア
     clear_cache()
     
-    app.secret_key = os.urandom(24)  # セッション用シークレットキー
+    # シークレットキーの確認（既に設定されているので再設定しない）
+    if not app.secret_key or app.secret_key == 'your_secret_key_here':
+        app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+        app.logger.info(f"シークレットキーを更新しました")
+    
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大アップロードサイズを50MBに制限
 
     # アップロードとダウンロードの設定
@@ -1613,71 +1627,114 @@ def login():
         app.logger.info(f"フォームデータ: {request.form}")
         app.logger.info(f"ログイン前のセッション状態: {session}")
         
-        # CSRFトークンを手動で検証
+        # CSRFトークンをログに出力
         csrf_token = session.get('csrf_token')
         token = request.form.get('csrf_token')
         app.logger.info(f"受信したトークン: {token}, セッショントークン: {csrf_token}")
         
-        # フォームデータを取得
-        username = request.form.get('username')
-        password = request.form.get('password')
-        app.logger.info(f"入力されたユーザー名: {username}, パスワード: {'*' * len(password) if password else 'なし'}")
-        
-        # 環境変数から管理者認証情報を取得
-        admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
-        app.logger.info(f"設定された管理者ユーザー名: {admin_username}")
-        
-        # 認証チェック
-        if username == admin_username and password == admin_password:
-            app.logger.info("認証成功: 管理者としてログイン")
+        # WTFormsのvalidate_on_submitを使用してCSRFトークンを検証
+        if form.validate_on_submit():
+            # フォームデータを取得
+            username = form.username.data
+            password = form.password.data
+            app.logger.info(f"入力されたユーザー名: {username}, パスワード: {'*' * len(password) if password else 'なし'}")
             
-            # 既存のセッションをクリア
-            session.clear()
-            app.logger.info("セッションをクリアしました")
+            # 環境変数から管理者認証情報を取得
+            admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+            admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
+            app.logger.info(f"設定された管理者ユーザー名: {admin_username}")
             
-            # 管理者情報をセッションに設定
-            session['admin_logged_in'] = True
-            session['admin_username'] = username
-            session['is_paid_member'] = True  # 管理者は有料会員の権限も持つ
-            session['login_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            session.permanent = True  # セッションを永続化
-            session.modified = True  # セッション変更を確実に保存
-            
-            # セッション設定後の状態をログ出力
-            app.logger.info(f"ログイン後のセッション状態: {session}")
-            app.logger.info(f"admin_logged_inの値: {session.get('admin_logged_in')}")
-            
-            flash('管理者としてログインしました', 'success')
-            
-            # リダイレクト先が指定されていればそこに、なければトップページに
-            redirect_url = next_page if next_page else url_for('index')
-            app.logger.info(f"リダイレクト先: {redirect_url}")
-            
-            # セッションを確実に保存するために再度確認
-            app.logger.info(f"リダイレクト前の最終確認 - セッション状態: {session}")
-            app.logger.info(f"リダイレクト前の最終確認 - admin_logged_in: {session.get('admin_logged_in')}")
-            
-            # セッションを確実に保存
-            session.modified = True
-            app.logger.info("セッションを確実に保存しました")
-            
-            # Cookieの設定を確認
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_NAME: {app.config.get('SESSION_COOKIE_NAME')}")
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_SECURE: {app.config.get('SESSION_COOKIE_SECURE')}")
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_HTTPONLY: {app.config.get('SESSION_COOKIE_HTTPONLY')}")
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_PATH: {app.config.get('SESSION_COOKIE_PATH')}")
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_DOMAIN: {app.config.get('SESSION_COOKIE_DOMAIN')}")
-            app.logger.info(f"Cookie設定 - SESSION_COOKIE_SAMESITE: {app.config.get('SESSION_COOKIE_SAMESITE')}")
-            
-            # レスポンスにCookieを確実に設定するための処理
-            response = make_response(redirect(redirect_url))
-            if '_flashes' in session:
-                app.logger.info(f"Flashメッセージがセッションに存在します: {session['_flashes']}")
-            
-            return response
+            # 認証チェック
+            if username == admin_username and password == admin_password:
+                app.logger.info("認証成功: 管理者としてログイン")
+                
+                # 既存のセッションをクリア
+                session.clear()
+                app.logger.info("セッションをクリアしました")
+                
+                # 管理者情報をセッションに設定
+                session['admin_logged_in'] = True
+                session['admin_username'] = username
+                session['is_paid_member'] = True  # 管理者は有料会員の権限も持つ
+                session['login_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                session.permanent = True  # セッションを永続化
+                session.modified = True  # セッション変更を確実に保存
+                
+                # セッション設定後の状態をログ出力
+                app.logger.info(f"ログイン後のセッション状態: {session}")
+                app.logger.info(f"admin_logged_inの値: {session.get('admin_logged_in')}")
+                
+                flash('管理者としてログインしました', 'success')
+                
+                # リダイレクト先が指定されていればそこに、なければトップページに
+                redirect_url = next_page if next_page else url_for('index')
+                app.logger.info(f"リダイレクト先: {redirect_url}")
+                
+                # セッションを確実に保存するために再度確認
+                app.logger.info(f"リダイレクト前の最終確認 - セッション状態: {session}")
+                app.logger.info(f"リダイレクト前の最終確認 - admin_logged_in: {session.get('admin_logged_in')}")
+                
+                # セッションを確実に保存
+                session.modified = True
+                app.logger.info("セッションを確実に保存しました")
+                
+                # Cookieの設定を確認
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_NAME: {app.config.get('SESSION_COOKIE_NAME')}")
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_SECURE: {app.config.get('SESSION_COOKIE_SECURE')}")
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_HTTPONLY: {app.config.get('SESSION_COOKIE_HTTPONLY')}")
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_PATH: {app.config.get('SESSION_COOKIE_PATH')}")
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_DOMAIN: {app.config.get('SESSION_COOKIE_DOMAIN')}")
+                app.logger.info(f"Cookie設定 - SESSION_COOKIE_SAMESITE: {app.config.get('SESSION_COOKIE_SAMESITE')}")
+                
+                # レスポンスにCookieを確実に設定するための処理
+                response = make_response(redirect(redirect_url))
+                if '_flashes' in session:
+                    app.logger.info(f"Flashメッセージがセッションに存在します: {session['_flashes']}")
+                
+                return response
+            else:
+                app.logger.info("認証失敗: ユーザー名またはパスワードが不正です")
+                flash('ユーザー名またはパスワードが正しくありません', 'danger')
         else:
-            app.logger.info("認証失敗: ユーザー名またはパスワードが不正")
+            app.logger.info(f"CSRF検証失敗またはフォーム検証エラー: {form.errors}")
+            flash('CSRFトークンが無効か、フォームにエラーがあります', 'danger')
+    
+    # セッション状態をログに出力
+    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
+    app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
+    
+    return render_template('login.html', form=form, next=next_page)
+
+# PayPalモードを取得（デフォルトはsandbox）
+paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
+
+# ユーザー権限情報
+is_admin = session.get('admin_logged_in', False)
+is_paid_member = session.get('is_paid_member', False)
+
+# セッション状態をログ出力
+app.logger.info(f"ログインページ表示時のセッション状態: {session}")
+app.logger.info(f"ログインページ表示時のis_admin: {is_admin}, is_paid_member: {is_paid_member}")
+
+# 本番モードでの制限表示フラグ
+show_restrictions = paypal_mode.lower() != 'sandbox' and not (is_admin or is_paid_member)
+
+return render_template('login.html', 
+                       form=form,
+                       next=next_page,
+                       mode=paypal_mode, 
+                       paypal_mode=paypal_mode,
+                       is_admin=is_admin,
+                       is_paid_member=is_paid_member,
+                       show_restrictions=show_restrictions)
+            app.logger.info(f"CSRF検証失敗またはフォーム検証エラー: {form.errors}")
+            flash('CSRFトークンが無効か、フォームにエラーがあります', 'danger')
+    
+    # セッション状態をログに出力
+    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
+    app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
+    
+    return render_template('login.html', form=form, next=next_page)fo("認証失敗: ユーザー名またはパスワードが不正")
     # PayPalモードを取得（デフォルトはsandbox）
     paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
     
