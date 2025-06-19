@@ -18,14 +18,34 @@ if current_dir not in sys.path:
 
 # その他の標準ライブラリをインポート
 import re
+import io
+import sys
 import json
-import PyPDF2
-import uuid
-import pdfplumber
 import time
+import uuid
+import base64
+import shutil
 import logging
-import urllib.parse
+import argparse
 import tempfile
+import traceback
+import subprocess
+from datetime import datetime
+from xhtml2pdf import pisa
+from io import BytesIO
+from flask import make_response, request, jsonify, render_template, abort
+
+import PyPDF2
+import pdfplumber
+import urllib.parse
+import importlib.util
+import importlib
+import requests
+import flask
+from functools import wraps
+from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash, generate_password_hash
+from dotenv import load_dotenv
 
 # ロガーの初期化
 logger = logging.getLogger(__name__)
@@ -69,6 +89,20 @@ def clear_cache():
 
 # 必要なモジュールをインポート
 # ローカルモジュールのインポート
+# 初期化: インポートが失敗した場合に備えて、ダミーのcustomer_extractorモジュールを作成
+# customer_extractor用のダミークラス定義
+class DummyExtractor:
+    @staticmethod
+    def extract_customer(text, filename=""):
+        logger.error("customer_extractorモジュールが正しく読み込まれていないため、顧客名抽出ができません")
+        return "Unknown Customer"
+
+# グローバル変数として先に定義
+customer_extractor = None
+
+# まずダミーインスタンスを設定
+_dummy_extractor = DummyExtractor()
+
 try:
     # カレントディレクトリを再確認（デプロイ環境用）
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -80,23 +114,32 @@ try:
     logger.info(f"Python path: {sys.path}")
     logger.info(f"現在のディレクトリ内のファイル: {os.listdir(current_dir)}")
     
-    import customer_extractor
+    # 標準的なインポート方法を試す
+    import customer_extractor as ce_module
+    # グローバル変数を設定
+    customer_extractor = ce_module
     logger.info("customer_extractorモジュールのインポートに成功しました")
 except ImportError as e:
     logger.error(f"customer_extractorモジュールのインポートに失敗: {e}")
     # フォールバック処理
-    # customer_extractor.pyファイルを直接読み込む
     try:
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "customer_extractor", 
             os.path.join(current_dir, "customer_extractor.py")
         )
-        customer_extractor = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(customer_extractor)
-        logger.info("customer_extractorモジュールを代替方法でインポートしました")
+        if spec:
+            ce_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ce_module)
+            customer_extractor = ce_module
+            logger.info("customer_extractorモジュールを代替方法でインポートしました")
+        else:
+            logger.error("customer_extractorモジュールのspecが取得できませんでした")
+            customer_extractor = _dummy_extractor
     except Exception as e2:
         logger.error(f"customer_extractorモジュールの代替インポートにも失敗: {e2}")
+        logger.error("ダミーのcustomer_extractorモジュールを使用します")
+        customer_extractor = _dummy_extractor
 
 # モジュールの再読み込みを強制する関数
 def reload_modules():
@@ -402,6 +445,20 @@ def save_config(config):
         return False
 # customer_extractorモジュールからCustomerExtractorクラスではなく関数をインポート
 # ローカルモジュールのインポート
+# 初期化: インポートが失敗した場合に備えて、ダミーのamount_extractorモジュールを作成
+# amount_extractor用のダミークラス定義
+class DummyAmountExtractor:
+    @staticmethod
+    def extract_invoice_amount(text):
+        logger.error("amount_extractorモジュールが正しく読み込まれていないため、金額抽出ができません")
+        return ("0", "")
+
+# グローバル変数として先に定義
+amount_extractor = None
+
+# まずダミーインスタンスを設定
+_dummy_amount_extractor = DummyAmountExtractor()
+
 try:
     # カレントディレクトリを再確認（デプロイ環境用）
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -409,8 +466,10 @@ try:
         sys.path.insert(0, current_dir)
         logger.info(f"sys.pathに追加しました: {current_dir}")
     
-    # amount_extractorモジュールをインポート
-    import amount_extractor
+    # 標準的なインポート方法を試す
+    import amount_extractor as ae_module
+    # グローバル変数を設定
+    amount_extractor = ae_module
     logger.info("amount_extractorモジュールのインポートに成功しました")
 except ImportError as e:
     logger.error(f"amount_extractorモジュールのインポートに失敗: {e}")
@@ -421,11 +480,18 @@ except ImportError as e:
             "amount_extractor", 
             os.path.join(current_dir, "amount_extractor.py")
         )
-        amount_extractor = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(amount_extractor)
-        logger.info("amount_extractorモジュールを代替方法でインポートしました")
+        if spec:
+            ae_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ae_module)
+            amount_extractor = ae_module
+            logger.info("amount_extractorモジュールを代替方法でインポートしました")
+        else:
+            logger.error("amount_extractorモジュールのspecが取得できませんでした")
+            amount_extractor = _dummy_amount_extractor
     except Exception as e2:
         logger.error(f"amount_extractorモジュールの代替インポートにも失敗: {e2}")
+        logger.error("ダミーのamount_extractorモジュールを使用します")
+        amount_extractor = _dummy_amount_extractor
 
 # 追加のPDF処理ライブラリをインポート
 try:
@@ -539,7 +605,7 @@ try:
         logger.info(f"sys.pathに追加しました: {current_dir}")
     
     # ローカルモジュールのインポート
-    from extractors import extract_text_from_pdf, extract_amount_only
+    from extractors import extract_amount_only
     from extractors import ExtractionResult
     logger.info("extractorsモジュールを正常に読み込みました。")
     ENHANCED_OCR_AVAILABLE = True
@@ -562,7 +628,6 @@ except ImportError as e:
             spec.loader.exec_module(extractors)
             
             # 必要な関数を取得
-            extract_text_from_pdf = extractors.extract_text_from_pdf
             extract_amount_only = extractors.extract_amount_only
             ExtractionResult = extractors.ExtractionResult
             
@@ -573,6 +638,152 @@ except ImportError as e:
     except Exception as e2:
         logger.error(f"extractorsモジュールの代替インポートにも失敗: {e2}")
     logger.warning("拡張OCRモジュールが見つかりません。基本的なOCR機能のみ使用します。")
+
+# PDFからテキストを抽出する関数
+def extract_text_from_pdf(pdf_path):
+    """
+    PDFからテキストを抽出する関数。複数の方法を試みる。
+    
+    Args:
+        pdf_path: PDFファイルのパス
+        
+    Returns:
+        dict: 抽出結果を含む辞書
+            - text: 抽出されたテキスト
+            - method: 使用された抽出方法
+            - success: 抽出成功したかどうか
+    """
+    if not os.path.exists(pdf_path):
+        logger.error(f"PDFファイルが存在しません: {pdf_path}")
+        return {"text": "", "method": "none", "success": False}
+    
+    methods_tried = []
+    last_error = None
+    
+    # 方法1: pdfplumberを使用
+    try:
+        import pdfplumber
+        methods_tried.append("pdfplumber")
+        logger.info(f"pdfplumberでテキスト抽出を試みます: {pdf_path}")
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                text += page_text + "\n\n"
+                
+        if text.strip():
+            logger.info(f"pdfplumberでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "pdfplumber", "success": True}
+        else:
+            logger.warning("pdfplumberでテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"pdfplumberでテキスト抽出エラー: {e}")
+    
+    # 方法2: PyPDF2を使用
+    try:
+        import PyPDF2
+        methods_tried.append("PyPDF2")
+        logger.info(f"PyPDF2でテキスト抽出を試みます: {pdf_path}")
+        
+        text = ""
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page in pdf_reader.pages:
+                page_text = page.extract_text() or ""
+                text += page_text + "\n\n"
+                
+        if text.strip():
+            logger.info(f"PyPDF2でテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "PyPDF2", "success": True}
+        else:
+            logger.warning("PyPDF2でテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"PyPDF2でテキスト抽出エラー: {e}")
+    
+    # 方法3: OCR (pytesseract) を使用
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+        methods_tried.append("pytesseract")
+        logger.info(f"OCR (pytesseract) でテキスト抽出を試みます: {pdf_path}")
+        
+        # PDFを画像に変換
+        images = convert_from_path(pdf_path)
+        text = ""
+        
+        for i, image in enumerate(images):
+            # OCRでテキスト抽出
+            page_text = pytesseract.image_to_string(image, lang='jpn+eng') or ""
+            text += page_text + "\n\n"
+            
+        if text.strip():
+            logger.info(f"OCRでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "ocr_pytesseract", "success": True}
+        else:
+            logger.warning("OCRでテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"OCRでテキスト抽出エラー: {e}")
+    
+    # 方法4: pdfminer.six を使用
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract_text
+        methods_tried.append("pdfminer.six")
+        logger.info(f"pdfminer.sixでテキスト抽出を試みます: {pdf_path}")
+        
+        text = pdfminer_extract_text(pdf_path)
+        
+        if text.strip():
+            logger.info(f"pdfminer.sixでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "pdfminer.six", "success": True}
+        else:
+            logger.warning("pdfminer.sixでテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"pdfminer.sixでテキスト抽出エラー: {e}")
+    
+    # 方法5: pdftotextコマンドを使用
+    try:
+        import subprocess
+        import tempfile
+        methods_tried.append("pdftotext")
+        logger.info(f"pdftotextコマンドでテキスト抽出を試みます: {pdf_path}")
+        
+        # 一時ファイルを作成
+        with tempfile.NamedTemporaryFile(suffix=".txt") as temp_file:
+            # pdftotextコマンドを実行
+            process = subprocess.Popen(
+                ["pdftotext", pdf_path, temp_file.name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            _, stderr = process.communicate(timeout=30)
+            
+            if process.returncode != 0:
+                logger.warning(f"pdftotextコマンド実行エラー: {stderr}")
+                raise Exception(f"pdftotextコマンド実行エラー: {stderr}")
+            
+            # 生成されたテキストファイルを読み込む
+            with open(temp_file.name, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+        
+        if text.strip():
+            logger.info(f"pdftotextコマンドでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "pdftotext", "success": True}
+        else:
+            logger.warning("pdftotextコマンドでテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"pdftotextコマンドでテキスト抽出エラー: {e}")
+    
+    # すべての方法が失敗した場合
+    logger.error(f"すべてのテキスト抽出方法が失敗しました。試行した方法: {', '.join(methods_tried)}")
+    logger.error(f"最後のエラー: {last_error}")
+    return {"text": "", "method": "failed", "success": False, "error": last_error}
 
 # AI OCR機能のインポート
 try:
@@ -755,7 +966,6 @@ except ImportError as e:
             "amount", original_amount, corrected_amount
         )
     
-    INTERACTIVE_CORRECTION_AVAILABLE = True
     logger.info("インタラクティブ修正モジュールを読み込みました")
 except ImportError as e:
     logger.warning(f"インタラクティブ修正モジュールを読み込めません: {str(e)}")
@@ -869,7 +1079,18 @@ def create_app():
     app.add_url_rule('/generate_payment_link', 'generate_payment_link', generate_payment_link, methods=['POST'])
 
     # インタラクティブ修正機能のルートを設定
-    if INTERACTIVE_CORRECTION_AVAILABLE:
+    # グローバル変数が定義されているか確認
+    interactive_available = False
+    try:
+        # interactive_correctionモジュールが存在するか確認
+        from interactive_correction import interactive_correction
+        interactive_available = True
+        logger.info("インタラクティブ修正機能が利用可能です")
+    except ImportError:
+        logger.warning("インタラクティブ修正機能は利用できません")
+        interactive_available = False
+        
+    if interactive_available:
         try:
             # 独自のルートを追加
             app.add_url_rule('/correction', 'correction', correction)
@@ -889,6 +1110,304 @@ def create_app():
     return app
 
 from flask import current_app
+
+# トップページ
+@app.route('/')
+def index():
+    """トップページを表示"""
+    # 現在の設定からPayPalモードを取得
+    config = get_config()
+    paypal_mode = config.get('paypal_mode', 'sandbox')
+    logger.info(f"PayPalモード: {paypal_mode}")
+    
+    # 管理者ログイン状態を確認
+    is_admin = session.get('admin_logged_in', False)
+    admin_username = session.get('admin_username', '')
+    
+    # セッション情報をログに出力（デバッグ用）
+    logger.info(f"セッション情報: admin_logged_in={is_admin}, username={admin_username}")
+    
+    # sessionオブジェクトをテンプレートに渡す
+    return render_template('index.html', paypal_mode=paypal_mode, session=session)
+
+# 支払い成功ページ
+@app.route('/payment_success')
+def payment_success():
+    """支払い成功時のリダイレクト先
+    
+    PayPalの支払いが成功した場合のページ
+    """
+    logger.info("支払いが成功しました")
+    # 現在の日時を取得
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 注文IDを生成（実際のアプリケーションではセッションから取得するなど）
+    order_id = f"ORDER-{uuid.uuid4().hex[:8].upper()}"
+    # 状態を設定
+    status = "COMPLETED"
+    # 結果を設定
+    result = "success"
+    return render_template('payment_result.html', 
+                           result=result, 
+                           status=status, 
+                           order_id=order_id, 
+                           current_time=current_time,
+                           is_pdf_export=False)
+
+# 支払いキャンセルページ
+@app.route('/payment_cancel')
+def payment_cancel():
+    """支払いキャンセル時のリダイレクト先
+    
+    PayPalの支払いがキャンセルされた場合のページ
+    """
+    logger.info("支払いがキャンセルされました")
+    # 現在の日時を取得
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 注文IDを生成（実際のアプリケーションではセッションから取得するなど）
+    order_id = f"ORDER-{uuid.uuid4().hex[:8].upper()}"
+    # 状態を設定
+    status = "CANCELLED"
+    # 結果を設定
+    result = "cancel"
+    return render_template('payment_result.html', 
+                           result=result, 
+                           status=status, 
+                           order_id=order_id, 
+                           current_time=current_time,
+                           is_pdf_export=False)
+
+# 決済結果をPDFでエクスポートするエンドポイント
+@app.route('/export_pdf/<result>')
+def export_pdf(result):
+    """決済結果をPDFでエクスポートする
+    
+    Args:
+        result: 'success'または'cancel'の文字列
+        order_id: リクエストパラメータとして渡される注文ID（オプション）
+    
+    Returns:
+        PDFファイルのレスポンス
+    """
+    try:
+        # 現在の日時を取得
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # リクエストからorder_idを取得（履歴からの呼び出し用）
+        order_id = request.args.get('order_id')
+        
+        # order_idが指定されていない場合は新しく生成
+        if not order_id:
+            order_id = f"ORDER-{uuid.uuid4().hex[:8].upper()}"
+        
+        # 結果に基づいて状態を設定
+        if result == "success":
+            status = "COMPLETED"
+        else:
+            status = "CANCELLED"
+            result = "cancel"  # 正規化
+            
+        # 顧客名と金額を取得（履歴からの場合）
+        customer_name = request.args.get('customer_name', '')
+        amount = request.args.get('amount', '')
+        
+        # 履歴からの場合、order_idから履歴データを探す
+        if order_id and not customer_name and not amount:
+            try:
+                # 全ての履歴ファイルを探索
+                results_folder = app.config['RESULTS_FOLDER']
+                for filename in os.listdir(results_folder):
+                    if filename.startswith('payment_links_') and filename.endswith('.json'):
+                        file_path = os.path.join(results_folder, filename)
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            for item in data.get('results', []):
+                                # 決済リンクからorder_idを抽出して比較
+                                payment_link = item.get('payment_link') or item.get('決済リンク', '')
+                                if payment_link and order_id in payment_link:
+                                    customer_name = item.get('formatted_customer') or item.get('customer') or item.get('顧客名', '')
+                                    amount = item.get('formatted_amount') or item.get('amount') or item.get('金額', '')
+                                    break
+                        if customer_name and amount:
+                            break
+            except Exception as e:
+                logger.error(f"履歴からの顧客データ取得エラー: {str(e)}")
+        
+        # HTMLテンプレートをレンダリング
+        html_content = render_template('payment_result.html', 
+                                      result=result, 
+                                      status=status, 
+                                      order_id=order_id, 
+                                      current_time=current_time,
+                                      is_pdf_export=True,  # PDF出力用フラグ
+                                      customer_name=customer_name,
+                                      amount=amount)
+        
+        # PDFファイルを格納するメモリバッファを作成
+        pdf_buffer = BytesIO()
+        
+        # HTMLからPDFを生成
+        pisa_status = pisa.CreatePDF(
+            html_content,
+            dest=pdf_buffer
+        )
+        
+        # PDF生成が成功したかチェック
+        if pisa_status.err:
+            logger.error(f"PDF生成中にエラーが発生しました: {pisa_status.err}")
+            return jsonify({"error": "PDFの生成に失敗しました"}), 500
+        
+        # バッファの先頭に移動
+        pdf_buffer.seek(0)
+        
+        # レスポンスを作成
+        response = make_response(pdf_buffer.getvalue())
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename=payment-receipt-{datetime.now().strftime("%Y%m%d%H%M%S")}.pdf'
+        
+        logger.info(f"決済結果({result})のPDFエクスポートが完了しました")
+        return response
+        
+    except Exception as e:
+        logger.error(f"PDFエクスポート中にエラーが発生しました: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 履歴から複数の決済結果をまとめてPDFでエクスポートするエンドポイント
+@app.route('/export_batch_pdf/<filename>')
+def export_batch_pdf(filename):
+    """
+    履歴ファイルから複数の決済結果をまとめてPDFでエクスポートする
+    
+    Args:
+        filename: 履歴ファイル名
+        
+    Returns:
+        PDFファイルのレスポンス
+    """
+    try:
+        # セキュリティ対策としてファイル名を検証
+        if '..' in filename or filename.startswith('/'):
+            logger.warning(f"不正なファイルパス: {filename}")
+            abort(404)
+            
+        results_folder = app.config['RESULTS_FOLDER']
+        file_path = os.path.join(results_folder, filename)
+        
+        if not os.path.exists(file_path):
+            logger.warning(f"履歴ファイルが存在しません: {file_path}")
+            abort(404)
+        
+        # ファイルの内容を読み込み
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 日付を取得
+        date = filename.replace('payment_links_', '').replace('.json', '')
+        
+        # データ構造を確認して適切に処理
+        logger.info(f"データ型: {type(data)}, データ内容: {str(data)[:200]}...")
+        
+        if isinstance(data, dict) and 'results' in data:
+            # 'results' キーがある場合はその中のリストを使用
+            items = data['results']
+            logger.info(f"'results'キーから{len(items)}件のアイテムを取得")
+        elif isinstance(data, list):
+            # データ自体がリストの場合はそのまま使用
+            items = data
+            logger.info(f"リストから{len(items)}件のアイテムを取得")
+        else:
+            # どちらでもない場合は空のリストとして扱う
+            logger.warning(f"不正なデータ形式: {type(data)}")
+            items = []
+        
+        # 完了した決済のみを抽出
+        completed_payments = []
+        for i, item in enumerate(items):
+            # 辞書型かどうか確認
+            if not isinstance(item, dict):
+                logger.warning(f"不正なアイテム形式 (インデックス {i}): {type(item)}")
+                continue
+                
+            # payment_statusフィールドを確認
+            payment_status = item.get('payment_status')
+            logger.info(f"アイテム {i}: payment_status = {payment_status}, キー = {list(item.keys())}")
+            if payment_status == "COMPLETED":
+                logger.info(f"完了した決済を追加: {item.get('customer') or item.get('顧客名', '不明')}")
+                completed_payments.append(item)
+        
+        if not completed_payments:
+            logger.warning(f"完了した決済が見つかりません: {filename}")
+            return jsonify({"error": "完了した決済が見つかりません"}), 404
+        
+        # 複数のPDFを結合するためのPyPDF2のPdfMergerを作成
+        from PyPDF2 import PdfMerger
+        merger = PdfMerger()
+        
+        # 各決済のPDFを生成して結合
+        for payment in completed_payments:
+            # 現在の日時を取得
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 決済情報を取得
+            # 決済リンクからorder_idを抽出
+            payment_link = payment.get('payment_link') or payment.get('決済リンク', '')
+            if payment_link and 'token=' in payment_link:
+                order_id = payment_link.split('token=')[1].split('&')[0]
+            else:
+                order_id = payment.get('order_id', f"ORDER-{uuid.uuid4().hex[:8].upper()}")
+            
+            # 顧客名と金額を取得（日本語と英語のフィールド名に対応）
+            customer_name = payment.get('formatted_customer') or payment.get('customer') or payment.get('顧客名', '')
+            amount = payment.get('formatted_amount') or payment.get('amount') or payment.get('金額', '')
+            
+            # HTMLテンプレートをレンダリング
+            html_content = render_template('payment_result.html', 
+                                          result="success", 
+                                          status="COMPLETED", 
+                                          order_id=order_id, 
+                                          current_time=current_time,
+                                          is_pdf_export=True,
+                                          customer_name=customer_name,
+                                          amount=amount)
+            
+            # PDFファイルを格納するメモリバッファを作成
+            pdf_buffer = BytesIO()
+            
+            # HTMLからPDFを生成
+            pisa_status = pisa.CreatePDF(html_content, dest=pdf_buffer)
+            
+            # PDF生成が成功したかチェック
+            if pisa_status.err:
+                logger.error(f"PDF生成中にエラーが発生しました: {pisa_status.err}")
+                continue
+            
+            # バッファの先頭に移動
+            pdf_buffer.seek(0)
+            
+            # PDFをマージャーに追加
+            merger.append(pdf_buffer)
+        
+        # 結合したPDFを格納するメモリバッファを作成
+        output_buffer = BytesIO()
+        
+        # PDFを結合
+        merger.write(output_buffer)
+        merger.close()
+        
+        # バッファの先頭に移動
+        output_buffer.seek(0)
+        
+        # レスポンスを作成
+        response = make_response(output_buffer.getvalue())
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename=payment-receipts-{date}.pdf'
+        
+        logger.info(f"バッチPDFエクスポートが完了しました: {filename}, {len(completed_payments)}件")
+        return response
+        
+    except Exception as e:
+        logger.error(f"バッチPDFエクスポート中にエラーが発生しました: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # ログイン・ログアウト機能
 @app.route('/login', methods=['GET', 'POST'])
@@ -982,8 +1501,6 @@ def login():
                 app.logger.info(f"Flashメッセージがセッションに存在します: {session['_flashes']}")
             
             return response
-            
-            return redirect(redirect_url)
         else:
             app.logger.info("認証失敗: ユーザー名またはパスワードが不正")
     # PayPalモードを取得（デフォルトはsandbox）
@@ -1105,9 +1622,18 @@ def history():
                     except:
                         formatted_date = date_str
                     
+                    # データ構造を確認して適切に処理
+                    items = []
+                    if isinstance(data, dict) and 'results' in data:
+                        # 'results' キーがある場合はその中のリストを使用
+                        items = data['results']
+                    elif isinstance(data, list):
+                        # データ自体がリストの場合はそのまま使用
+                        items = data
+                    
                     # 顧客名を取得
                     customers = []
-                    for item in data:
+                    for item in items:
                         # データが辞書型か確認
                         if isinstance(item, dict):
                             customer = item.get('customer') or item.get('顧客名')
@@ -1119,7 +1645,7 @@ def history():
                         'filename': file,
                         'date': formatted_date,
                         'customers': customers,
-                        'count': len(data)
+                        'count': len(items)
                     })
             except Exception as e:
                 logger.error(f"履歴ファイル読み込みエラー ({file}): {str(e)}")
@@ -1133,6 +1659,53 @@ def history():
     except Exception as e:
         logger.error(f"履歴ファイル一覧取得エラー: {str(e)}")
     return render_template('history.html', history_data=history_data)
+
+@app.route('/history/<filename>')
+def history_detail(filename):
+    """
+    履歴詳細ページ
+    
+    Args:
+        filename: 履歴ファイル名
+    """
+    try:
+        # セキュリティ対策としてファイル名を検証
+        if '..' in filename or filename.startswith('/'):
+            logger.warning(f"不正なファイルパス: {filename}")
+            abort(404)
+            
+        results_folder = app.config['RESULTS_FOLDER']
+        file_path = os.path.join(results_folder, filename)
+        
+        if not os.path.exists(file_path):
+            logger.warning(f"履歴ファイルが存在しません: {file_path}")
+            abort(404)
+        
+        # ファイルの内容を読み込み
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 日付を取得
+        date = filename.replace('payment_links_', '').replace('.json', '')
+        
+        # データ構造を確認して適切に処理
+        results = []
+        if isinstance(data, dict) and 'results' in data:
+            # 'results' キーがある場合はその中のリストを使用
+            results = data['results']
+        elif isinstance(data, list):
+            # データ自体がリストの場合はそのまま使用
+            results = data
+        else:
+            # どちらでもない場合は空のリストとして扱う
+            logger.warning(f"不正なデータ形式: {type(data)}")
+            results = []
+        
+        return render_template('history_detail.html', filename=filename, date=date, results=results)
+    
+    except Exception as e:
+        logger.error(f"履歴詳細取得エラー: {str(e)}")
+        abort(500)
 
 # 履歴削除機能
 @app.route('/history/delete', methods=['POST'])
@@ -1268,6 +1841,119 @@ def delete_history():
         flash(message, 'success' if error_count == 0 else 'warning')
         
     return redirect(url_for('history'))
+
+@app.route('/history/delete_all_with_paypal', methods=['POST'])
+@paid_member_or_admin_required
+def delete_all_history_with_paypal():
+    """
+    全ての履歴ファイルを削除し、関連するPayPal注文情報も削除する関数
+    """
+    results_folder = current_app.config['RESULTS_FOLDER']
+    if not os.path.exists(results_folder):
+        return jsonify({
+            'success': False,
+            'message': '履歴フォルダが見つかりません。'
+        }), 404
+    
+    # 履歴ファイルの一覧を取得
+    history_files = [f for f in os.listdir(results_folder) 
+                    if f.startswith('payment_links_') and f.endswith('.json')]
+    
+    if not history_files:
+        return jsonify({
+            'success': True,
+            'message': '削除対象の履歴ファイルがありませんでした。'
+        })
+    
+    deleted_count = 0
+    paypal_deleted_count = 0
+    error_count = 0
+    
+    for filename in history_files:
+        file_path = os.path.join(results_folder, filename)
+        if os.path.exists(file_path):
+            try:
+                # PayPal注文IDを抽出して削除を試みる
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        # 決済リンクからオーダーIDを抽出
+                        payment_links = re.findall(r'https://www\.paypal\.com/cgi-bin/webscr\?cmd=_express-checkout\&token=([^"\&]+)', content)
+                        if not payment_links:
+                            # 別形式のリンクを試す
+                            payment_links = re.findall(r'https://www\.paypal\.com/checkoutnow\?token=([^"\&]+)', content)
+                        
+                        for token in payment_links:
+                            try:
+                                logger.info(f"PayPal注文キャンセル処理開始: {token}")
+                                
+                                # PayPalのアクセストークンを取得
+                                access_token = get_paypal_access_token()
+                                if not access_token:
+                                    logger.error(f"PayPalアクセストークン取得失敗のため、注文キャンセルをスキップ: {token}")
+                                    continue
+                                
+                                # APIベースURLとヘッダーを設定
+                                api_base = get_api_base()
+                                headers = {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': f'Bearer {access_token}',
+                                    'Accept': 'application/json'
+                                }
+                                
+                                # まず注文の状態を確認
+                                logger.info(f"PayPal注文情報を取得中: {token}")
+                                success, order_status, response_text = check_order_status(api_base, token, headers)
+                                
+                                if success:
+                                    logger.info(f"PayPal注文状態: {token} = {order_status}")
+                                    
+                                    # キャンセル可能なステータスか確認
+                                    cancelable_statuses = ['CREATED', 'APPROVED', 'SAVED']
+                                    if order_status in cancelable_statuses:
+                                        # キャンセル処理を実行
+                                        cancel_url = f"{api_base}/v2/checkout/orders/{token}/cancel"
+                                        logger.info(f"PayPal注文キャンセルリクエスト送信: {cancel_url}")
+                                        
+                                        response = requests.post(cancel_url, headers=headers)
+                                        
+                                        if response.status_code == 204:
+                                            logger.info(f"PayPal注文キャンセル成功: {token}")
+                                            paypal_deleted_count += 1
+                                        else:
+                                            logger.error(f"PayPal注文キャンセル失敗: {token}, ステータスコード: {response.status_code}, レスポンス: {response.text}")
+                                            error_count += 1
+                                    else:
+                                        logger.info(f"PayPal注文はキャンセル不可能な状態です: {token}, 状態: {order_status}")
+                                else:
+                                    logger.error(f"PayPal注文情報の取得に失敗: {token}, レスポンス: {response_text}")
+                            except Exception as e:
+                                logger.error(f"PayPal注文キャンセル処理中にエラー発生: {token}, エラー: {str(e)}")
+                                error_count += 1
+                except Exception as e:
+                    logger.error(f"ファイル読み込み中にエラー発生: {filename}, エラー: {str(e)}")
+                    error_count += 1
+                
+                # ファイルを削除
+                os.remove(file_path)
+                logger.info(f"履歴ファイルを削除しました: {filename}")
+                deleted_count += 1
+            except Exception as e:
+                logger.error(f"ファイル削除中にエラー発生: {filename}, エラー: {str(e)}")
+                error_count += 1
+    
+    # 結果を返す
+    message = f"{deleted_count}件の履歴ファイルと{paypal_deleted_count}件のPayPal注文を削除しました。"
+    if error_count > 0:
+        message += f" {error_count}件のエラーが発生しました。"
+    
+    return jsonify({
+        'success': error_count == 0,
+        'message': message,
+        'deleted_count': deleted_count,
+        'paypal_deleted_count': paypal_deleted_count,
+        'error_count': error_count
+    })
 
 # PayPal決済状態の確認
 # トークンキャッシュ用の変数（モジュールレベル）
@@ -1722,6 +2408,67 @@ def generate_payment_link():
         }), 500
 
 # 単一PDFファイルの処理
+def upload_file():
+    """PDFファイルをアップロードするエンドポイント
+    
+    フロントエンドからアップロードされたPDFファイルを保存し、ファイル名を返す
+    """
+    logger.info("ファイルアップロードリクエストを受信")
+    logger.info(f"リクエストタイプ: {request.content_type}")
+    logger.info(f"リクエストファイル: {request.files}")
+    logger.info(f"リクエストフォーム: {request.form}")
+    logger.info(f"リクエストデータ: {request.data}")
+    
+    try:
+        # ファイルが存在するか確認
+        if 'file' not in request.files:
+            logger.error("ファイルが見つかりません")
+            return jsonify({
+                'success': False,
+                'error': 'ファイルが見つかりません'
+            }), 400
+        
+        file = request.files['file']
+        
+        # ファイル名が空でないか確認
+        if file.filename == '':
+            logger.error("ファイル名が空です")
+            return jsonify({
+                'success': False,
+                'error': 'ファイル名が空です'
+            }), 400
+        
+        # ファイル名を安全に処理
+        filename = secure_filename(file.filename)
+        
+        # アップロードフォルダが存在することを確認
+        upload_folder = current_app.config.get('UPLOAD_FOLDER')
+        if not os.path.exists(upload_folder):
+            os.makedirs(upload_folder)
+            logger.info(f"アップロードフォルダを作成しました: {upload_folder}")
+        
+        # ファイルを保存
+        filepath = os.path.join(upload_folder, filename)
+        file.save(filepath)
+        
+        logger.info(f"ファイルを保存しました: {filepath}")
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'message': 'ファイルがアップロードされました'
+        })
+        
+    except Exception as e:
+        logger.error(f"ファイルアップロードエラー: {str(e)}")
+        import traceback
+        logger.error(f"スタックトレース: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': f'ファイルアップロード中にエラーが発生しました: {str(e)}'
+        }), 500
+
+
 def process_single_pdf(filepath, filename, request):
     try:
         logger.info(f"単一PDF処理開始: {filepath}")
@@ -2234,6 +2981,15 @@ def download_file(filename):
         logger.error(f"ファイルダウンロードエラー: {str(e)}")
         abort(500)
 
+# 新しいバッチPDFエクスポート機能をインポート
+try:
+    from batch_pdf_export import register_batch_export_route
+    # バッチPDFエクスポートのルートを登録
+    register_batch_export_route(app)
+    logger.info("バッチPDFエクスポート機能を登録しました")
+except Exception as e:
+    logger.error(f"バッチPDFエクスポート機能の登録エラー: {str(e)}")
+
 # アプリ実行
 if __name__ == '__main__':
     # ロガーの初期化
@@ -2247,6 +3003,11 @@ if __name__ == '__main__':
     logger.info("=== 環境変数 ===")
     for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR']:
         logger.info(f"{key}: {os.environ.get(key, 'Not set')}")
+        
+    # バッチPDFエクスポートのルートを表示
+    logger.info("=== ルート情報 ===")
+    for rule in app.url_map.iter_rules():
+        logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
     
     # 設定の初期化
     def initialize_config():
@@ -2277,20 +3038,33 @@ if __name__ == '__main__':
     # 設定の初期化
     initialize_config()
 
-    # アプリケーション作成
-    def create_app():
-        port = get_port()
-        
-        # Renderなどのクラウド環境では、debug=Falseを使用
-        debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-        logger.info(f"アプリ起動: host=0.0.0.0, port={port}, debug={debug_mode}")
+    import argparse
     
-    # アプリ初期化
-    create_app()
-    port = get_port()
+    # コマンドライン引数を処理
+    parser = argparse.ArgumentParser(description='PDF PayPal System')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8080)),
+                        help='ポート番号 (デフォルト: 8080 または環境変数PORT)')
+    parser.add_argument('--host', type=str, default='0.0.0.0',
+                        help='ホスト (デフォルト: 0.0.0.0)')
+    parser.add_argument('--debug', action='store_true',
+                        help='デバッグモードを有効にする')
     
-    # Renderなどのクラウド環境では、debug=Falseを使用
-    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    logger.info(f"アプリ起動: host=0.0.0.0, port={port}, debug={debug_mode}")
+    args = parser.parse_args()
     
-    app.run(debug=debug_mode, host='0.0.0.0', port=port)
+    # アプリ初期化と起動
+    port = args.port
+    host = args.host
+    debug_mode = args.debug or os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    
+    logger.info(f"アプリ起動: host={host}, port={port}, debug={debug_mode}")
+    
+    # create_app関数を使用してアプリケーションを初期化
+    application = create_app()
+    
+    # 登録されているルートを表示（デバッグ用）
+    logger.info("=== 登録されているルート ===")
+    for rule in application.url_map.iter_rules():
+        logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
+    
+    # 初期化されたアプリケーションを実行
+    application.run(debug=debug_mode, host=host, port=port)

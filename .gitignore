@@ -34,6 +34,12 @@ uploads/*
 !uploads/.keep
 results/*
 !results/.keep
+exports/*
+!exports/.keep
+
+# テスト用ファイル
+test_batch_export.pdf
+test_batch_export_web.pdf
 
 # ログファイル
 *.log
