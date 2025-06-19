@@ -2408,6 +2408,7 @@ def generate_payment_link():
         }), 500
 
 # 単一PDFファイルの処理
+@app.route('/upload', methods=['POST'])
 def upload_file():
     """PDFファイルをアップロードするエンドポイント
     
