@@ -1,0 +1,24 @@
+services:
+  # Webサービスの定義
+  - type: web
+    name: pdf-paypal-system
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: UPLOAD_FOLDER
+        value: ./uploads
+      - key: RESULTS_FOLDER
+        value: ./results
+      - key: USE_TEMP_DIR
+        value: "true"
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: PAYPAL_MODE
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false

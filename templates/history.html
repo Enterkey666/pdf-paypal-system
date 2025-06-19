@@ -80,18 +80,21 @@
                                                 </td>
                                                 <td>{{ item.count }} 件</td>
                                                 <td>
-                                                    <div class="d-flex gap-2">
-                                                        <a href="/history/{{ item.filename }}" class="btn btn-sm btn-primary">
-                                                            <i class="bi bi-search"></i> 詳細を見る
-                                                        </a>
-                                                        <button type="button" class="btn btn-sm btn-danger delete-history-btn" 
-                                                                data-bs-toggle="modal" 
-                                                                data-bs-target="#deleteConfirmModal"
-                                                                data-filename="{{ item.filename }}"
-                                                                data-date="{{ item.date }}">
-                                                            <i class="bi bi-trash"></i> 削除
-                                                        </button>
-                                                    </div>
+                                                     <div class="d-flex gap-2">
+                                                         <a href="/history/{{ item.filename }}" class="btn btn-sm btn-primary">
+                                                             <i class="bi bi-search"></i> 詳細を見る
+                                                         </a>
+                                                          <a href="/export_batch_pdf/{{ item.filename }}" class="btn btn-sm btn-outline-success pdf-export-btn" title="PDF一括エクスポート" data-filename="{{ item.filename }}">
+                                                              <i class="bi bi-file-earmark-pdf"></i> <span class="btn-text">PDF</span>
+                                                          </a>
+                                                         <button type="button" class="btn btn-sm btn-danger delete-history-btn" 
+                                                                 data-bs-toggle="modal" 
+                                                                 data-bs-target="#deleteConfirmModal"
+                                                                 data-filename="{{ item.filename }}"
+                                                                 data-date="{{ item.date }}">
+                                                             <i class="bi bi-trash"></i> 削除
+                                                         </button>
+                                                     </div>
                                                 </td>
                                             </tr>
                                         {% endfor %}
@@ -193,6 +196,39 @@
                 } else {
                     alert('確認コードが一致しません。もう一度お試しください。');
                 }
+            });
+            
+            // PDFエクスポートボタンのクリックイベント
+            const pdfExportButtons = document.querySelectorAll('.pdf-export-btn');
+            pdfExportButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    // ボタンのテキストを変更
+                    const btnText = this.querySelector('.btn-text');
+                    const originalText = btnText.textContent;
+                    btnText.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                    
+                    // ボタンを無効化
+                    this.classList.add('disabled');
+                    
+                    // 通知を表示
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-info mt-3 pdf-export-alert';
+                    alertDiv.innerHTML = '<i class="bi bi-info-circle"></i> PDFエクスポートを処理中です。しばらくお待ちください...';
+                    
+                    // 通知を表示する場所を特定
+                    const cardBody = this.closest('.card-body');
+                    if (cardBody) {
+                        // 既存の通知があれば削除
+                        const existingAlert = cardBody.querySelector('.pdf-export-alert');
+                        if (existingAlert) {
+                            existingAlert.remove();
+                        }
+                        cardBody.appendChild(alertDiv);
+                    }
+                    
+                    // 通常の動作を続行（リンクを開く）
+                    // 注意: このイベントはキャンセルしない
+                });
             });
         });
 

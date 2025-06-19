@@ -1005,6 +1005,32 @@ if not config.get('paypal_mode') and PAYPAL_MODE:
 # これにより、設定変更時に全ての機能が正しく動作する
 # API_BASE = "https://api-m.sandbox.paypal.com" if config.get('paypal_mode') == "sandbox" else "https://api-m.paypal.com"
 
+# 設定の初期化関数をグローバルスコープに定義
+def initialize_config():
+    """
+    アプリケーションの設定を初期化する
+    デフォルト設定の作成と環境変数の読み込みを行う
+    """
+    try:
+        # 現在の設定を取得
+        config = get_config()
+        
+        # 環境変数から設定を読み込む
+        if 'PAYPAL_CLIENT_ID' in os.environ:
+            config['client_id'] = os.environ['PAYPAL_CLIENT_ID']
+        if 'PAYPAL_CLIENT_SECRET' in os.environ:
+            config['client_secret'] = os.environ['PAYPAL_CLIENT_SECRET']
+        if 'PAYPAL_MODE' in os.environ:
+            config['paypal_mode'] = os.environ['PAYPAL_MODE']
+        if 'ADMIN_EMAIL' in os.environ:
+            config['admin_email'] = os.environ['ADMIN_EMAIL']
+            
+        # 設定を保存
+        save_config(config)
+        logger.info("設定を初期化しました")
+    except Exception as e:
+        logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
+
 def create_app():
     # アプリ起動時にキャッシュをクリア
     clear_cache()
@@ -1052,6 +1078,7 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
 
     # 設定の初期化
+    # initialize_config関数はグローバルスコープに定義されているため、ここでは直接呼び出す
     initialize_config()
     logger.info("アプリケーションを初期化しました")
 
@@ -1213,22 +1240,67 @@ def export_pdf(result):
         # 履歴からの場合、order_idから履歴データを探す
         if order_id and not customer_name and not amount:
             try:
-                # 全ての履歴ファイルを探索
-                results_folder = app.config['RESULTS_FOLDER']
-                for filename in os.listdir(results_folder):
-                    if filename.startswith('payment_links_') and filename.endswith('.json'):
-                        file_path = os.path.join(results_folder, filename)
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            for item in data.get('results', []):
-                                # 決済リンクからorder_idを抽出して比較
-                                payment_link = item.get('payment_link') or item.get('決済リンク', '')
-                                if payment_link and order_id in payment_link:
-                                    customer_name = item.get('formatted_customer') or item.get('customer') or item.get('顧客名', '')
-                                    amount = item.get('formatted_amount') or item.get('amount') or item.get('金額', '')
-                                    break
-                        if customer_name and amount:
+                # ファイルパスの候補を作成
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                results_folder = app.config.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+                
+                # 履歴ファイルを探索するディレクトリのリスト
+                search_dirs = [
+                    results_folder,
+                    os.path.join(base_dir, 'results'),
+                    base_dir,
+                    os.path.join(os.getcwd(), 'results'),
+                    os.getcwd()
+                ]
+                
+                # 重複を削除
+                search_dirs = list(set(search_dirs))
+                
+                found = False
+                for search_dir in search_dirs:
+                    if not os.path.exists(search_dir):
+                        logger.warning(f"ディレクトリが存在しません: {search_dir}")
+                        continue
+                        
+                    logger.info(f"履歴ファイルを検索: {search_dir}")
+                    try:
+                        for filename in os.listdir(search_dir):
+                            if filename.startswith('payment_links_') and filename.endswith('.json'):
+                                file_path = os.path.join(search_dir, filename)
+                                try:
+                                    with open(file_path, 'r', encoding='utf-8') as f:
+                                        data = json.load(f)
+                                        
+                                        # データ構造を確認
+                                        if isinstance(data, dict) and 'results' in data:
+                                            items = data['results']
+                                        elif isinstance(data, list):
+                                            items = data
+                                        else:
+                                            logger.warning(f"不正なデータ形式: {file_path}")
+                                            continue
+                                        
+                                        for item in items:
+                                            if not isinstance(item, dict):
+                                                continue
+                                                
+                                            # 決済リンクからorder_idを抽出して比較
+                                            payment_link = item.get('payment_link') or item.get('決済リンク', '')
+                                            if payment_link and order_id in payment_link:
+                                                customer_name = item.get('customer_name') or item.get('formatted_customer') or item.get('customer') or item.get('顧客名', '')
+                                                amount = item.get('formatted_amount') or item.get('amount') or item.get('金額', '')
+                                                found = True
+                                                logger.info(f"履歴から顧客データを取得: {customer_name}, {amount}")
+                                                break
+                                    if found:
+                                        break
+                                except Exception as e:
+                                    logger.error(f"履歴ファイル読み込みエラー: {file_path}, {str(e)}")
+                                    continue
+                        if found:
                             break
+                    except Exception as e:
+                        logger.error(f"ディレクトリ読み込みエラー: {search_dir}, {str(e)}")
             except Exception as e:
                 logger.error(f"履歴からの顧客データ取得エラー: {str(e)}")
         
@@ -1260,19 +1332,29 @@ def export_pdf(result):
         pdf_buffer.seek(0)
         
         # レスポンスを作成
-        response = make_response(pdf_buffer.getvalue())
-        response.headers['Content-Type'] = 'application/pdf'
-        response.headers['Content-Disposition'] = f'attachment; filename=payment-receipt-{datetime.now().strftime("%Y%m%d%H%M%S")}.pdf'
-        
-        logger.info(f"決済結果({result})のPDFエクスポートが完了しました")
-        return response
+        try:
+            response = make_response(pdf_buffer.getvalue())
+            response.headers['Content-Type'] = 'application/pdf'
+            response.headers['Content-Disposition'] = f'attachment; filename=payment-receipt-{datetime.now().strftime("%Y%m%d%H%M%S")}.pdf'
+            
+            logger.info(f"決済結果({result})のPDFエクスポートが完了しました")
+            return response
+        except Exception as e:
+            logger.error(f"PDFレスポンス作成エラー: {str(e)}")
+            return jsonify({"error": f"PDFレスポンスの作成に失敗しました: {str(e)}"}), 500
         
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         logger.error(f"PDFエクスポート中にエラーが発生しました: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"エラーの詳細: {error_trace}")
+        return jsonify({"error": str(e), "details": "詳細はサーバーログを確認してください"}), 500
 
 
 # 履歴から複数の決済結果をまとめてPDFでエクスポートするエンドポイント
+# グローバルスコープでPyPDF2をインポート
+from PyPDF2 import PdfMerger
+
 @app.route('/export_batch_pdf/<filename>')
 def export_batch_pdf(filename):
     """
@@ -1289,23 +1371,53 @@ def export_batch_pdf(filename):
         if '..' in filename or filename.startswith('/'):
             logger.warning(f"不正なファイルパス: {filename}")
             abort(404)
-            
-        results_folder = app.config['RESULTS_FOLDER']
-        file_path = os.path.join(results_folder, filename)
         
-        if not os.path.exists(file_path):
-            logger.warning(f"履歴ファイルが存在しません: {file_path}")
+        # ファイルパスの候補を作成
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        results_folder = app.config.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+        
+        # 複数の候補パスを確認
+        path_candidates = [
+            os.path.join(results_folder, filename),  # 設定されたRESULTS_FOLDERからのパス
+            os.path.join(base_dir, 'results', filename),  # アプリケーションディレクトリのresultsフォルダ
+            os.path.join(base_dir, filename),  # アプリケーションディレクトリ直下
+            os.path.join(os.getcwd(), 'results', filename),  # カレントディレクトリのresultsフォルダ
+            os.path.join(os.getcwd(), filename)  # カレントディレクトリ直下
+        ]
+        
+        # 存在するファイルパスを探す
+        file_path = None
+        for path in path_candidates:
+            logger.info(f"ファイルパスを確認: {path}")
+            if os.path.exists(path):
+                file_path = path
+                logger.info(f"ファイルが見つかりました: {file_path}")
+                break
+        
+        if not file_path:
+            logger.warning(f"履歴ファイルが存在しません: {filename}")
             abort(404)
         
         # ファイルの内容を読み込み
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+                logger.info(f"ファイル内容 (最初の100文字): {file_content[:100]}...")
+                data = json.loads(file_content)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSONデコードエラー: {str(e)}")
+            return jsonify({"error": f"JSONファイルの解析に失敗しました: {str(e)}"}), 400
+        except Exception as e:
+            logger.error(f"ファイル読み込みエラー: {str(e)}")
+            return jsonify({"error": f"ファイルの読み込みに失敗しました: {str(e)}"}), 500
         
         # 日付を取得
         date = filename.replace('payment_links_', '').replace('.json', '')
+        if not date or not date[0].isdigit():
+            date = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # データ構造を確認して適切に処理
-        logger.info(f"データ型: {type(data)}, データ内容: {str(data)[:200]}...")
+        logger.info(f"データ型: {type(data)}, データ内容: {str(data)[:200] if data else 'なし'}...")
         
         if isinstance(data, dict) and 'results' in data:
             # 'results' キーがある場合はその中のリストを使用
@@ -1331,17 +1443,22 @@ def export_batch_pdf(filename):
             # payment_statusフィールドを確認
             payment_status = item.get('payment_status')
             logger.info(f"アイテム {i}: payment_status = {payment_status}, キー = {list(item.keys())}")
-            if payment_status == "COMPLETED":
-                logger.info(f"完了した決済を追加: {item.get('customer') or item.get('顧客名', '不明')}")
+            
+            # payment_statusがない場合でも、他の情報から完了したかどうかを判断
+            if payment_status == "COMPLETED" or (item.get('payment_link') and not payment_status):
+                logger.info(f"完了した決済を追加: {item.get('customer_name') or item.get('customer') or item.get('顧客名', '不明')}")
                 completed_payments.append(item)
         
         if not completed_payments:
             logger.warning(f"完了した決済が見つかりません: {filename}")
             return jsonify({"error": "完了した決済が見つかりません"}), 404
         
-        # 複数のPDFを結合するためのPyPDF2のPdfMergerを作成
-        from PyPDF2 import PdfMerger
-        merger = PdfMerger()
+        # 複数のPDFを結合するためのPdfMergerを作成
+        try:
+            merger = PdfMerger()
+        except Exception as e:
+            logger.error(f"PdfMergerの作成に失敗しました: {str(e)}")
+            return jsonify({"error": f"PDFマージャーの初期化に失敗しました: {str(e)}"}), 500
         
         # 各決済のPDFを生成して結合
         for payment in completed_payments:
@@ -1385,29 +1502,47 @@ def export_batch_pdf(filename):
             pdf_buffer.seek(0)
             
             # PDFをマージャーに追加
-            merger.append(pdf_buffer)
+            try:
+                merger.append(pdf_buffer)
+                logger.info(f"PDFをマージャーに追加しました: {customer_name}")
+            except Exception as e:
+                logger.error(f"PDFのマージに失敗しました: {str(e)}")
+                # 1つのPDFの追加に失敗しても続行
+                continue
         
-        # 結合したPDFを格納するメモリバッファを作成
-        output_buffer = BytesIO()
+        # 結合するPDFがあるか確認
+        if len(completed_payments) == 0:
+            logger.warning("結合するPDFがありません")
+            return jsonify({"error": "PDFの生成に失敗しました"}), 500
         
-        # PDFを結合
-        merger.write(output_buffer)
-        merger.close()
-        
-        # バッファの先頭に移動
-        output_buffer.seek(0)
-        
-        # レスポンスを作成
-        response = make_response(output_buffer.getvalue())
-        response.headers['Content-Type'] = 'application/pdf'
-        response.headers['Content-Disposition'] = f'attachment; filename=payment-receipts-{date}.pdf'
-        
-        logger.info(f"バッチPDFエクスポートが完了しました: {filename}, {len(completed_payments)}件")
-        return response
+        try:
+            # 結合したPDFを格納するメモリバッファを作成
+            output_buffer = BytesIO()
+            
+            # PDFを結合
+            merger.write(output_buffer)
+            merger.close()
+            
+            # バッファの先頭に移動
+            output_buffer.seek(0)
+            
+            # レスポンスを作成
+            response = make_response(output_buffer.getvalue())
+            response.headers['Content-Type'] = 'application/pdf'
+            response.headers['Content-Disposition'] = f'attachment; filename=payment-receipts-{date}.pdf'
+            
+            logger.info(f"バッチPDFエクスポートが完了しました: {filename}, {len(completed_payments)}件")
+            return response
+        except Exception as e:
+            logger.error(f"PDFの結合と出力に失敗しました: {str(e)}")
+            return jsonify({"error": f"PDFの結合と出力に失敗しました: {str(e)}"}), 500
         
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         logger.error(f"バッチPDFエクスポート中にエラーが発生しました: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"エラーの詳細: {error_trace}")
+        return jsonify({"error": str(e), "details": "詳細はサーバーログを確認してください"}), 500
 
 # ログイン・ログアウト機能
 @app.route('/login', methods=['GET', 'POST'])
@@ -1636,7 +1771,8 @@ def history():
                     for item in items:
                         # データが辞書型か確認
                         if isinstance(item, dict):
-                            customer = item.get('customer') or item.get('顧客名')
+                            # 優先順位: formatted_customer > customer > 顧客名
+                            customer = item.get('formatted_customer') or item.get('customer') or item.get('顧客名')
                             if customer and customer not in customers:
                                 customers.append(customer)
                     
@@ -3010,33 +3146,7 @@ if __name__ == '__main__':
     for rule in app.url_map.iter_rules():
         logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
     
-    # 設定の初期化
-    def initialize_config():
-        """
-        アプリケーションの設定を初期化する
-        デフォルト設定の作成と環境変数の読み込みを行う
-        """
-        try:
-            # 現在の設定を取得
-            config = get_config()
-            
-            # 環境変数から設定を読み込む
-            if 'PAYPAL_CLIENT_ID' in os.environ:
-                config['client_id'] = os.environ['PAYPAL_CLIENT_ID']
-            if 'PAYPAL_CLIENT_SECRET' in os.environ:
-                config['client_secret'] = os.environ['PAYPAL_CLIENT_SECRET']
-            if 'PAYPAL_MODE' in os.environ:
-                config['paypal_mode'] = os.environ['PAYPAL_MODE']
-            if 'ADMIN_EMAIL' in os.environ:
-                config['admin_email'] = os.environ['ADMIN_EMAIL']
-                
-            # 設定を保存
-            save_config(config)
-            logger.info("設定を初期化しました")
-        except Exception as e:
-            logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
-
-    # 設定の初期化
+    # 設定の初期化はグローバル関数を呼び出す
     initialize_config()
 
     import argparse

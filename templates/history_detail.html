@@ -64,7 +64,7 @@
                                         {% for item in results %}
                                         <tr>
                                             <td>{{ item.filename or item.ファイル名 }}</td>
-                                            <td class="fw-bold fs-5 text-primary">{{ item.formatted_customer or item.customer or item.顧客名 }}</td>
+                                            <td class="fw-bold fs-5 text-primary">{{ item.formatted_customer or item.customer or item.customer_name or item.顧客名 }}</td>
                                             <td>{{ item.formatted_amount or item.amount or item.金額 }}</td>
                                             <td>
                                                 {% if item.payment_link or item.決済リンク %}
@@ -80,7 +80,21 @@
                                             </td>
                                             <td>
                                                 {% if item.payment_status == "COMPLETED" %}
-                                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> 決済済み</span>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> 決済済み</span>
+                                                        {% set payment_link = item.payment_link or item.決済リンク %}
+                                                        {% set customer = item.formatted_customer or item.customer or item.顧客名 or '' %}
+                                                        {% set amount_value = item.formatted_amount or item.amount or item.金額 or '' %}
+                                                        {% if payment_link %}
+                                                            <a href="{{ url_for('export_pdf', result='success') }}?order_id={{ payment_link.split('token=')[1] if 'token=' in payment_link else '' }}&customer_name={{ customer }}&amount={{ amount_value }}" class="btn btn-sm btn-outline-success pdf-export-btn" title="PDFで保存">
+                                                                <i class="bi bi-file-earmark-pdf"></i> <span class="btn-text">PDF</span>
+                                                            </a>
+                                                        {% else %}
+                                                            <a href="{{ url_for('export_pdf', result='success') }}?customer_name={{ customer }}&amount={{ amount_value }}" class="btn btn-sm btn-outline-success pdf-export-btn" title="PDFで保存">
+                                                                <i class="bi bi-file-earmark-pdf"></i> <span class="btn-text">PDF</span>
+                                                            </a>
+                                                        {% endif %}
+                                                    </div>
                                                 {% elif item.payment_status == "PENDING" %}
                                                     <span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> 処理中</span>
                                                 {% elif item.payment_status == "FAILED" %}
@@ -124,15 +138,54 @@
             copyButtons.forEach(button => {
                 button.addEventListener('click', function() {
                     const link = this.getAttribute('data-link');
-                    navigator.clipboard.writeText(link).then(() => {
-                        // コピー成功時の通知を表示
-                        const toast = new bootstrap.Toast(document.getElementById('copyToast'));
-                        toast.show();
-                    }).catch(err => {
-                        console.error('クリップボードへのコピーに失敗しました:', err);
-                    });
+                    
+                    // クリップボードAPIが使用可能かチェック
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(link).then(() => {
+                            // コピー成功時の通知を表示
+                            const toast = new bootstrap.Toast(document.getElementById('copyToast'));
+                            toast.show();
+                        }).catch(err => {
+                            console.error('クリップボードへのコピーに失敗しました:', err);
+                            // フォールバックメソッド
+                            fallbackCopyTextToClipboard(link);
+                        });
+                    } else {
+                        // フォールバックメソッド
+                        fallbackCopyTextToClipboard(link);
+                    }
                 });
             });
+            
+            // フォールバックのクリップボードコピー機能
+            function fallbackCopyTextToClipboard(text) {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                
+                // スクロールしないようにする
+                textArea.style.top = '0';
+                textArea.style.left = '0';
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        const toast = new bootstrap.Toast(document.getElementById('copyToast'));
+                        toast.show();
+                    } else {
+                        console.error('クリップボードへのコピーに失敗しました');
+                    }
+                } catch (err) {
+                    console.error('クリップボードへのコピーに失敗しました:', err);
+                }
+                
+                document.body.removeChild(textArea);
+            }
 
             // 決済リンクのクリックイベントを強化
             const paymentLinks = document.querySelectorAll('a[href^="https://www.paypal.com"]');
@@ -143,6 +196,43 @@
                     // 新しいウィンドウでリンクを開く
                     const url = this.getAttribute('href');
                     window.open(url, '_blank');
+                });
+            });
+            
+            // PDFエクスポートボタンのクリックイベント
+            const pdfExportButtons = document.querySelectorAll('.pdf-export-btn');
+            pdfExportButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    // ボタンのテキストを変更
+                    const btnText = this.querySelector('.btn-text');
+                    if (btnText) {
+                        const originalText = btnText.textContent;
+                        btnText.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                    } else {
+                        this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                    }
+                    
+                    // ボタンを無効化
+                    this.classList.add('disabled');
+                    
+                    // 通知を表示
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-info mt-3 pdf-export-alert';
+                    alertDiv.innerHTML = '<i class="bi bi-info-circle"></i> PDFエクスポートを処理中です。しばらくお待ちください...';
+                    
+                    // 通知を表示する場所を特定
+                    const container = document.querySelector('.container');
+                    if (container) {
+                        // 既存の通知があれば削除
+                        const existingAlert = container.querySelector('.pdf-export-alert');
+                        if (existingAlert) {
+                            existingAlert.remove();
+                        }
+                        container.insertBefore(alertDiv, container.firstChild.nextSibling);
+                    }
+                    
+                    // 通常の動作を続行（リンクを開く）
+                    // 注意: このイベントはキャンセルしない
                 });
             });
         });

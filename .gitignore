@@ -45,6 +45,9 @@ test_batch_export_web.pdf
 *.log
 error_summary.txt
 
+# セッションファイル
+flask_session/
+
 # IDEの設定
 .idea/
 .vscode/
