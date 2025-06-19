@@ -1041,8 +1041,18 @@ def create_app():
     # アップロードとダウンロードの設定
     # Renderのような環境では一時ディレクトリを使用
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    upload_folder = os.environ.get('UPLOAD_FOLDER', os.path.join(base_dir, 'uploads'))
-    results_folder = os.environ.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+    
+    # 環境変数からフォルダ設定を取得、存在しない場合はデフォルト値を使用
+    upload_folder = os.environ.get('UPLOAD_FOLDER')
+    if upload_folder is None or not upload_folder.strip():
+        upload_folder = os.path.join(base_dir, 'uploads')
+        logger.info(f"UPLOAD_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {upload_folder}")
+    
+    results_folder = os.environ.get('RESULTS_FOLDER')
+    if results_folder is None or not results_folder.strip():
+        results_folder = os.path.join(base_dir, 'results')
+        logger.info(f"RESULTS_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {results_folder}")
+    
     allowed_extensions = {'pdf'}
     
     # クラウド環境では一時ディレクトリを使用する場合がある
@@ -1242,7 +1252,22 @@ def export_pdf(result):
             try:
                 # ファイルパスの候補を作成
                 base_dir = os.path.dirname(os.path.abspath(__file__))
-                results_folder = app.config.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+                
+                # results_folderの取得
+                results_folder = app.config.get('RESULTS_FOLDER')
+                
+                # results_folderがNoneの場合のフォールバック処理
+                if results_folder is None:
+                    # 環境変数から取得を試みる
+                    results_folder = os.environ.get('RESULTS_FOLDER')
+                    
+                    # それでもNoneの場合はデフォルト値を使用
+                    if results_folder is None:
+                        results_folder = os.path.join(base_dir, 'results')
+                        logger.warning(f"RESULTS_FOLDERが設定されていないため、デフォルト値を使用します: {results_folder}")
+                
+                # 設定を更新
+                app.config['RESULTS_FOLDER'] = results_folder
                 
                 # 履歴ファイルを探索するディレクトリのリスト
                 search_dirs = [
@@ -1374,7 +1399,22 @@ def export_batch_pdf(filename):
         
         # ファイルパスの候補を作成
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        results_folder = app.config.get('RESULTS_FOLDER', os.path.join(base_dir, 'results'))
+        
+        # results_folderの取得
+        results_folder = app.config.get('RESULTS_FOLDER')
+        
+        # results_folderがNoneの場合のフォールバック処理
+        if results_folder is None:
+            # 環境変数から取得を試みる
+            results_folder = os.environ.get('RESULTS_FOLDER')
+            
+            # それでもNoneの場合はデフォルト値を使用
+            if results_folder is None:
+                results_folder = os.path.join(base_dir, 'results')
+                logger.warning(f"RESULTS_FOLDERが設定されていないため、デフォルト値を使用します: {results_folder}")
+        
+        # 設定を更新
+        app.config['RESULTS_FOLDER'] = results_folder
         
         # 複数の候補パスを確認
         path_candidates = [
@@ -2580,9 +2620,24 @@ def upload_file():
         
         # アップロードフォルダが存在することを確認
         upload_folder = current_app.config.get('UPLOAD_FOLDER')
+        
+        # upload_folderがNoneの場合のフォールバック処理
+        if upload_folder is None:
+            # 環境変数から取得を試みる
+            upload_folder = os.environ.get('UPLOAD_FOLDER')
+            
+            # それでもNoneの場合はデフォルト値を使用
+            if upload_folder is None:
+                upload_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+                logger.warning(f"UPLOAD_FOLDERが設定されていないため、デフォルト値を使用します: {upload_folder}")
+        
+        # アップロードフォルダが存在しない場合は作成
         if not os.path.exists(upload_folder):
             os.makedirs(upload_folder)
             logger.info(f"アップロードフォルダを作成しました: {upload_folder}")
+            
+        # 設定を更新
+        current_app.config['UPLOAD_FOLDER'] = upload_folder
         
         # ファイルを保存
         filepath = os.path.join(upload_folder, filename)
@@ -2716,7 +2771,23 @@ def process_pdf():
             return jsonify({'error': 'ファイル名が指定されていません'}), 400
         
         filename = data['filename']
-        upload_folder = current_app.config['UPLOAD_FOLDER']
+        
+        # アップロードフォルダの取得
+        upload_folder = current_app.config.get('UPLOAD_FOLDER')
+        
+        # upload_folderがNoneの場合のフォールバック処理
+        if upload_folder is None:
+            # 環境変数から取得を試みる
+            upload_folder = os.environ.get('UPLOAD_FOLDER')
+            
+            # それでもNoneの場合はデフォルト値を使用
+            if upload_folder is None:
+                upload_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+                logger.warning(f"UPLOAD_FOLDERが設定されていないため、デフォルト値を使用します: {upload_folder}")
+        
+        # 設定を更新
+        current_app.config['UPLOAD_FOLDER'] = upload_folder
+        
         filepath = os.path.join(upload_folder, filename)
         
         logger.info(f"PDF処理ファイルパス: {filepath}")
