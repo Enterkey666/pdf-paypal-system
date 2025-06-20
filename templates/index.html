@@ -931,13 +931,16 @@
                     // アップロード成功後、PDFの処理を開始
                     if (data.success && data.filename) {
                         // /processエンドポイントを呼び出し
+                        const processToken = document.querySelector('meta[name="csrf-token"]')?.content;
                         return fetch('/process', {
                             method: 'POST',
                             headers: {
+                                'X-CSRFToken': processToken,
                                 'Content-Type': 'application/json',
                             },
                             body: JSON.stringify({
-                                filename: data.filename
+                                filename: data.filename,
+                                csrf_token: processToken
                             })
                         })
                         .then(response => {
@@ -1174,13 +1177,16 @@
                         progressMessage.textContent = 'PDFの処理を開始しています...';
                         
                         // /processエンドポイントを呼び出し
+                        const processToken = document.querySelector('meta[name="csrf-token"]')?.content;
                         return fetch('/process', {
                             method: 'POST',
                             headers: {
+                                'X-CSRFToken': processToken,
                                 'Content-Type': 'application/json',
                             },
                             body: JSON.stringify({
-                                filename: data.filename
+                                filename: data.filename,
+                                csrf_token: processToken
                             })
                         })
                         .then(response => {
