@@ -1599,6 +1599,7 @@ def export_batch_pdf(filename):
         return jsonify({"error": str(e), "details": "詳細はサーバーログを確認してください"}), 500
 
 # ログイン・ログアウト機能
+# ログイン・ログアウト機能
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """
@@ -1703,38 +1704,6 @@ def login():
     app.logger.info(f"ログインページ表示時のセッション状態: {session}")
     app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
     
-    return render_template('login.html', form=form, next=next_page)
-
-# PayPalモードを取得（デフォルトはsandbox）
-paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
-
-# ユーザー権限情報
-is_admin = session.get('admin_logged_in', False)
-is_paid_member = session.get('is_paid_member', False)
-
-# セッション状態をログ出力
-app.logger.info(f"ログインページ表示時のセッション状態: {session}")
-app.logger.info(f"ログインページ表示時のis_admin: {is_admin}, is_paid_member: {is_paid_member}")
-
-# 本番モードでの制限表示フラグ
-show_restrictions = paypal_mode.lower() != 'sandbox' and not (is_admin or is_paid_member)
-
-return render_template('login.html', 
-                       form=form,
-                       next=next_page,
-                       mode=paypal_mode, 
-                       paypal_mode=paypal_mode,
-                       is_admin=is_admin,
-                       is_paid_member=is_paid_member,
-                       show_restrictions=show_restrictions)
-            app.logger.info(f"CSRF検証失敗またはフォーム検証エラー: {form.errors}")
-            flash('CSRFトークンが無効か、フォームにエラーがあります', 'danger')
-    
-    # セッション状態をログに出力
-    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
-    app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
-    
-    return render_template('login.html', form=form, next=next_page)fo("認証失敗: ユーザー名またはパスワードが不正")
     # PayPalモードを取得（デフォルトはsandbox）
     paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
     
@@ -1742,22 +1711,17 @@ return render_template('login.html',
     is_admin = session.get('admin_logged_in', False)
     is_paid_member = session.get('is_paid_member', False)
     
-    # セッション状態をログ出力
-    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
-    app.logger.info(f"ログインページ表示時のis_admin: {is_admin}, is_paid_member: {is_paid_member}")
-    
     # 本番モードでの制限表示フラグ
     show_restrictions = paypal_mode.lower() != 'sandbox' and not (is_admin or is_paid_member)
     
     return render_template('login.html', 
-                           form=form,
-                           next=next_page,
-                           mode=paypal_mode, 
-                           paypal_mode=paypal_mode,
-                           is_admin=is_admin,
-                           is_paid_member=is_paid_member,
-                           show_restrictions=show_restrictions)
-
+                          form=form,
+                          next=next_page,
+                          mode=paypal_mode, 
+                          paypal_mode=paypal_mode,
+                          is_admin=is_admin,
+                          is_paid_member=is_paid_member,
+                          show_restrictions=show_restrictions)
 @app.route('/logout')
 def logout():
     """
