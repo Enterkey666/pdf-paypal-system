@@ -143,17 +143,19 @@ except ImportError as e:
 
 # モジュールの再読み込みを強制する関数
 def reload_modules():
+    global customer_extractor
     try:
         # customer_extractorモジュールが正しくインポートされているか確認
         if 'customer_extractor' in sys.modules:
             import importlib
-            importlib.reload(customer_extractor)
+            customer_extractor = importlib.reload(sys.modules['customer_extractor'])
             logger.info("customer_extractorモジュールを再読み込みしました")
         else:
             logger.warning("customer_extractorモジュールがインポートされていないため、再読み込みをスキップします")
             # モジュールを再インポートしてみる
             try:
-                import customer_extractor
+                import customer_extractor as ce_module
+                customer_extractor = ce_module
                 logger.info("customer_extractorモジュールを再インポートしました")
             except ImportError as e:
                 logger.error(f"customer_extractorモジュールの再インポートに失敗: {e}")

@@ -510,7 +510,15 @@ def process_pdf_with_ai_ocr(pdf_path: str, config: Dict = None) -> ExtractionRes
     if extracted_text.strip():
         try:
             from extractors import extract_amount_and_customer, extract_amount_only, ExtractionResult
-            import customer_extractor  # 新しい顧客名抽出モジュールをインポート
+            
+            # customer_extractorモジュールをグローバル変数としてインポート
+            try:
+                import customer_extractor
+                logger.info("ai_ocr.py内でcustomer_extractorモジュールをインポートしました")
+            except ImportError as e:
+                logger.error(f"ai_ocr.py内でcustomer_extractorモジュールのインポートに失敗: {e}")
+                # app.pyで定義されているダミーのcustomer_extractorを使用
+                from app import customer_extractor
             
             # 最初に主要なテキストから抽出を試みる
             extraction_result = extract_amount_and_customer(extracted_text)
