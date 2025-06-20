@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>PDF一括処理 & PayPal決済リンク発行</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
@@ -888,6 +889,147 @@
                 }
             }
             
+            // 次のファイルを処理する関数
+            function processNextFile() {
+                if (!window.remainingFiles || window.remainingFiles.length === 0) {
+                    console.log('すべてのファイルの処理が完了しました');
+                    return;
+                }
+                
+                // 次のファイルを取得
+                const nextFile = window.remainingFiles.shift();
+                console.log('次のファイルを処理します:', nextFile.name);
+                
+                // FormDataを作成
+                const formData = new FormData();
+                formData.append('file', nextFile);
+                
+                // 金額入力があれば追加
+                const amountInput = document.getElementById('amount-input');
+                if (amountInput && amountInput.value) {
+                    formData.append('amount', amountInput.value);
+                }
+                
+                // プログレスメッセージを更新
+                const progressMessage = document.getElementById('progress-message');
+                if (progressMessage) {
+                    progressMessage.textContent = `${nextFile.name} を処理中...`;
+                }
+                
+                // ファイルをアップロード
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('サーバーエラーが発生しました: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // アップロード成功後、PDFの処理を開始
+                    if (data.success && data.filename) {
+                        // /processエンドポイントを呼び出し
+                        return fetch('/process', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                filename: data.filename
+                            })
+                        })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error('PDF処理中にエラーが発生しました: ' + response.status);
+                            }
+                            return response.json();
+                        });
+                    } else {
+                        // アップロードに失敗した場合
+                        throw new Error(data.error || 'ファイルのアップロードに失敗しました');
+                    }
+                })
+                .then(data => {
+                    // 結果をテーブルに追加
+                    if (data && data.results && Array.isArray(data.results)) {
+                        const tableBody = document.getElementById('results-table-body');
+                        const currentRowCount = tableBody.children.length;
+                        
+                        data.results.forEach((result, index) => {
+                            const row = document.createElement('tr');
+                            row.className = 'result-row';
+                            row.setAttribute('data-index', currentRowCount + index);
+                            
+                            if (result.error) {
+                                row.innerHTML = `
+                                    <td>${result.filename || '不明'}</td>
+                                    <td colspan="3" class="text-danger">${result.error}</td>
+                                `;
+                            } else {
+                                // 顧客名の整形
+                                const customerName = result.customer_name ? result.customer_name.replace(/\n/g, ' ').trim() : '抽出できませんでした';
+                                
+                                // 金額の整形処理
+                                let numericAmount = '';
+                                let formattedAmount = '抽出できませんでした';
+                                
+                                if (result.amount) {
+                                    if (typeof result.amount === 'object' && result.amount.selected) {
+                                        numericAmount = result.amount.selected.toString().replace(/[^0-9]/g, '');
+                                    } else if (typeof result.amount === 'string' || typeof result.amount === 'number') {
+                                        numericAmount = result.amount.toString().replace(/[^0-9]/g, '');
+                                    }
+                                    formattedAmount = numericAmount ? `¥${formatAmount(numericAmount)}` : '抽出できませんでした';
+                                }
+                                
+                                // 決済リンク表示部分
+                                let paymentLinkHtml = '';
+                                if (result.payment_link) {
+                                    paymentLinkHtml = `
+                                        <a href="${result.payment_link}" target="_blank" class="btn btn-sm btn-success">
+                                            <i class="bi bi-link-45deg me-1"></i>決済リンク
+                                        </a>`;
+                                } else {
+                                    paymentLinkHtml = `
+                                         <button class="btn btn-sm btn-primary generate-payment-link" data-index="${currentRowCount + index}" data-customer="${customerName}" data-amount="${numericAmount}">
+                                             <i class="bi bi-link-45deg me-1"></i>決済リンク生成
+                                         </button>`;
+                                }
+                                
+                                row.innerHTML = `
+                                    <td class="filename">${result.filename || '不明'}</td>
+                                    <td class="customer-name">${customerName}</td>
+                                    <td class="amount">${formattedAmount}</td>
+                                    <td>${paymentLinkHtml}</td>
+                                `;
+                            }
+                            
+                            tableBody.appendChild(row);
+                        });
+                        
+                        // 残りのファイルがあれば処理を続行
+                        if (window.remainingFiles && window.remainingFiles.length > 0) {
+                            setTimeout(() => {
+                                processNextFile();
+                            }, 1000);
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('ファイル処理エラー:', error);
+                    showErrorToast(`ファイル ${nextFile.name} の処理中にエラーが発生しました: ${error.message}`);
+                    
+                    // エラーがあっても残りのファイルを処理
+                    if (window.remainingFiles && window.remainingFiles.length > 0) {
+                        setTimeout(() => {
+                            processNextFile();
+                        }, 1000);
+                    }
+                });
+            }
+            
             // フォーム送信処理
             let isSubmitting = false; // 送信中フラグを追加
             document.getElementById('upload-form').addEventListener('submit', function(e) {
@@ -922,10 +1064,26 @@
                 // FormDataオブジェクトを新規作成（フォーム要素から継承せず）
                 const formData = new FormData();
                 
-                // ファイルをFormDataに追加
-                const file = files.values().next().value;
+                // 処理対象のファイル配列を作成
+                const filesArray = Array.from(files);
+                if (filesArray.length === 0) {
+                    showWarningToast('ファイルが選択されていません');
+                    return;
+                }
+                
+                // CSRFトークンをFormDataに追加
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+                if (csrfToken) {
+                    formData.append('csrf_token', csrfToken);
+                }
+                
+                // 最初のファイルをFormDataに追加（順次処理のため）
+                const file = filesArray[0];
                 console.log('アップロードするファイル:', file.name, file.type, file.size);
                 formData.append('file', file);
+                
+                // 残りのファイル情報を保存（後続処理用）
+                window.remainingFiles = filesArray.slice(1);
                 
                 // デバッグ用にフォームデータの内容を確認
                 console.log('フォームデータのキー:');
@@ -974,9 +1132,15 @@
                 
                 // デバッグ情報を削除
                 
+                // 既に取得済みのCSRFトークンを使用
+                console.log('CSRFトークンをヘッダーに追加:', csrfToken);
+                
                 // Fetch APIを使用してフォームデータを送信
                 fetch('/upload', {
                     method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    },
                     body: formData
                 })
                 .then(response => {
@@ -1143,6 +1307,14 @@
                     const tableBody = document.getElementById('results-table-body');
                     // データ構造のチェックと安全な処理
                     if (data && data.results && Array.isArray(data.results)) {
+                        
+                        // 残りのファイルがあれば処理を続行
+                        if (window.remainingFiles && window.remainingFiles.length > 0) {
+                            // 次のファイルを処理
+                            setTimeout(() => {
+                                processNextFile();
+                            }, 1000);
+                        }
                         data.results.forEach((result, index) => {
                         const row = document.createElement('tr');
                         row.className = 'result-row';
