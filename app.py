@@ -654,7 +654,7 @@ except ImportError as e:
 # PDFからテキストを抽出する関数
 def extract_text_from_pdf(pdf_path):
     """
-    PDFからテキストを抽出する関数。複数の方法を試みる。
+    PDFからテキストを抽出する関数。処理速度を最適化。
     
     Args:
         pdf_path: PDFファイルのパス
@@ -672,28 +672,7 @@ def extract_text_from_pdf(pdf_path):
     methods_tried = []
     last_error = None
     
-    # 方法1: pdfplumberを使用
-    try:
-        import pdfplumber
-        methods_tried.append("pdfplumber")
-        logger.info(f"pdfplumberでテキスト抽出を試みます: {pdf_path}")
-        
-        with pdfplumber.open(pdf_path) as pdf:
-            text = ""
-            for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                text += page_text + "\n\n"
-                
-        if text.strip():
-            logger.info(f"pdfplumberでテキスト抽出成功: {len(text)} 文字")
-            return {"text": text, "method": "pdfplumber", "success": True}
-        else:
-            logger.warning("pdfplumberでテキスト抽出失敗: テキストが空です")
-    except Exception as e:
-        last_error = str(e)
-        logger.warning(f"pdfplumberでテキスト抽出エラー: {e}")
-    
-    # 方法2: PyPDF2を使用
+    # 方法1: PyPDF2を使用（最も高速な方法を最初に試す）
     try:
         import PyPDF2
         methods_tried.append("PyPDF2")
@@ -715,32 +694,30 @@ def extract_text_from_pdf(pdf_path):
         last_error = str(e)
         logger.warning(f"PyPDF2でテキスト抽出エラー: {e}")
     
-    # 方法3: OCR (pytesseract) を使用
+    # 方法2: pdfplumberを使用
     try:
-        import pytesseract
-        from pdf2image import convert_from_path
-        methods_tried.append("pytesseract")
-        logger.info(f"OCR (pytesseract) でテキスト抽出を試みます: {pdf_path}")
+        import pdfplumber
+        methods_tried.append("pdfplumber")
+        logger.info(f"pdfplumberでテキスト抽出を試みます: {pdf_path}")
         
-        # PDFを画像に変換
-        images = convert_from_path(pdf_path)
-        text = ""
-        
-        for i, image in enumerate(images):
-            # OCRでテキスト抽出
-            page_text = pytesseract.image_to_string(image, lang='jpn+eng') or ""
-            text += page_text + "\n\n"
-            
+        with pdfplumber.open(pdf_path) as pdf:
+            text = ""
+            # 最初のページだけ処理して速度を向上
+            if len(pdf.pages) > 0:
+                page = pdf.pages[0]
+                page_text = page.extract_text() or ""
+                text += page_text + "\n\n"
+                
         if text.strip():
-            logger.info(f"OCRでテキスト抽出成功: {len(text)} 文字")
-            return {"text": text, "method": "ocr_pytesseract", "success": True}
+            logger.info(f"pdfplumberでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "pdfplumber", "success": True}
         else:
-            logger.warning("OCRでテキスト抽出失敗: テキストが空です")
+            logger.warning("pdfplumberでテキスト抽出失敗: テキストが空です")
     except Exception as e:
         last_error = str(e)
-        logger.warning(f"OCRでテキスト抽出エラー: {e}")
+        logger.warning(f"pdfplumberでテキスト抽出エラー: {e}")
     
-    # 方法4: pdfminer.six を使用
+    # 方法3: pdfminer.six を使用
     try:
         from pdfminer.high_level import extract_text as pdfminer_extract_text
         methods_tried.append("pdfminer.six")
@@ -757,7 +734,7 @@ def extract_text_from_pdf(pdf_path):
         last_error = str(e)
         logger.warning(f"pdfminer.sixでテキスト抽出エラー: {e}")
     
-    # 方法5: pdftotextコマンドを使用
+    # 方法4: pdftotextコマンドを使用
     try:
         import subprocess
         import tempfile
@@ -766,14 +743,14 @@ def extract_text_from_pdf(pdf_path):
         
         # 一時ファイルを作成
         with tempfile.NamedTemporaryFile(suffix=".txt") as temp_file:
-            # pdftotextコマンドを実行
+            # pdftotextコマンドを実行（タイムアウトを短く設定）
             process = subprocess.Popen(
                 ["pdftotext", pdf_path, temp_file.name],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
-            _, stderr = process.communicate(timeout=30)
+            _, stderr = process.communicate(timeout=10)  # タイムアウトを短縮
             
             if process.returncode != 0:
                 logger.warning(f"pdftotextコマンド実行エラー: {stderr}")
