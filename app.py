@@ -267,6 +267,7 @@ app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
 # paypal_utils.pyからの関数インポート
 # ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
+import database
 
 # 管理者認証用デコレータ
 def admin_required(f):
@@ -654,7 +655,7 @@ except ImportError as e:
 # PDFからテキストを抽出する関数
 def extract_text_from_pdf(pdf_path):
     """
-    PDFからテキストを抽出する関数。処理速度を最適化。
+    PDFからテキストを抽出する関数。複数の方法を試みる。
     
     Args:
         pdf_path: PDFファイルのパス
@@ -672,7 +673,28 @@ def extract_text_from_pdf(pdf_path):
     methods_tried = []
     last_error = None
     
-    # 方法1: PyPDF2を使用（最も高速な方法を最初に試す）
+    # 方法1: pdfplumberを使用
+    try:
+        import pdfplumber
+        methods_tried.append("pdfplumber")
+        logger.info(f"pdfplumberでテキスト抽出を試みます: {pdf_path}")
+        
+        with pdfplumber.open(pdf_path) as pdf:
+            text = ""
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                text += page_text + "\n\n"
+                
+        if text.strip():
+            logger.info(f"pdfplumberでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "pdfplumber", "success": True}
+        else:
+            logger.warning("pdfplumberでテキスト抽出失敗: テキストが空です")
+    except Exception as e:
+        last_error = str(e)
+        logger.warning(f"pdfplumberでテキスト抽出エラー: {e}")
+    
+    # 方法2: PyPDF2を使用
     try:
         import PyPDF2
         methods_tried.append("PyPDF2")
@@ -694,30 +716,32 @@ def extract_text_from_pdf(pdf_path):
         last_error = str(e)
         logger.warning(f"PyPDF2でテキスト抽出エラー: {e}")
     
-    # 方法2: pdfplumberを使用
+    # 方法3: OCR (pytesseract) を使用
     try:
-        import pdfplumber
-        methods_tried.append("pdfplumber")
-        logger.info(f"pdfplumberでテキスト抽出を試みます: {pdf_path}")
+        import pytesseract
+        from pdf2image import convert_from_path
+        methods_tried.append("pytesseract")
+        logger.info(f"OCR (pytesseract) でテキスト抽出を試みます: {pdf_path}")
         
-        with pdfplumber.open(pdf_path) as pdf:
-            text = ""
-            # 最初のページだけ処理して速度を向上
-            if len(pdf.pages) > 0:
-                page = pdf.pages[0]
-                page_text = page.extract_text() or ""
-                text += page_text + "\n\n"
-                
+        # PDFを画像に変換
+        images = convert_from_path(pdf_path)
+        text = ""
+        
+        for i, image in enumerate(images):
+            # OCRでテキスト抽出
+            page_text = pytesseract.image_to_string(image, lang='jpn+eng') or ""
+            text += page_text + "\n\n"
+            
         if text.strip():
-            logger.info(f"pdfplumberでテキスト抽出成功: {len(text)} 文字")
-            return {"text": text, "method": "pdfplumber", "success": True}
+            logger.info(f"OCRでテキスト抽出成功: {len(text)} 文字")
+            return {"text": text, "method": "ocr_pytesseract", "success": True}
         else:
-            logger.warning("pdfplumberでテキスト抽出失敗: テキストが空です")
+            logger.warning("OCRでテキスト抽出失敗: テキストが空です")
     except Exception as e:
         last_error = str(e)
-        logger.warning(f"pdfplumberでテキスト抽出エラー: {e}")
+        logger.warning(f"OCRでテキスト抽出エラー: {e}")
     
-    # 方法3: pdfminer.six を使用
+    # 方法4: pdfminer.six を使用
     try:
         from pdfminer.high_level import extract_text as pdfminer_extract_text
         methods_tried.append("pdfminer.six")
@@ -734,7 +758,7 @@ def extract_text_from_pdf(pdf_path):
         last_error = str(e)
         logger.warning(f"pdfminer.sixでテキスト抽出エラー: {e}")
     
-    # 方法4: pdftotextコマンドを使用
+    # 方法5: pdftotextコマンドを使用
     try:
         import subprocess
         import tempfile
@@ -743,14 +767,14 @@ def extract_text_from_pdf(pdf_path):
         
         # 一時ファイルを作成
         with tempfile.NamedTemporaryFile(suffix=".txt") as temp_file:
-            # pdftotextコマンドを実行（タイムアウトを短く設定）
+            # pdftotextコマンドを実行
             process = subprocess.Popen(
                 ["pdftotext", pdf_path, temp_file.name],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
-            _, stderr = process.communicate(timeout=10)  # タイムアウトを短縮
+            _, stderr = process.communicate(timeout=30)
             
             if process.returncode != 0:
                 logger.warning(f"pdftotextコマンド実行エラー: {stderr}")
@@ -1021,7 +1045,17 @@ def initialize_config():
         logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
 
 def create_app():
-    # アプリ起動時にキャッシュをクリア
+    """アプリケーションを作成する"""
+    global app, csrf
+    
+    # データベースの初期化
+    try:
+        database.init_db()
+        logger.info("データベースが初期化されました")
+    except Exception as e:
+        logger.error(f"データベース初期化エラー: {str(e)}")
+    
+    # キャッシュをクリア
     clear_cache()
     
     # シークレットキーの確認（既に設定されているので再設定しない）
@@ -1600,7 +1634,7 @@ def login():
     app.logger.info(f"CSRF enabled: {app.config.get('WTF_CSRF_ENABLED', False)}")
     app.logger.info(f"CSRF token in session: {'csrf_token' in session}")
     app.logger.info(f"環境変数 ADMIN_USERNAME: {os.environ.get('ADMIN_USERNAME')}")
-    app.logger.info(f"環境変数 ADMIN_PASSWORD: {os.environ.get('ADMIN_PASSWORD')}")
+    app.logger.info(f"環境変数 ADMIN_PASSWORD: {'設定あり' if os.environ.get('ADMIN_PASSWORD') else 'なし'}")
     
     # POSTリクエストの処理
     if request.method == 'POST':
@@ -1608,7 +1642,7 @@ def login():
         app.logger.info(f"ログイン前のセッション状態: {session}")
         
         # CSRFトークンをログに出力
-        csrf_token = session.get('csrf_token')
+        csrf_token = session.get('_csrf_token', session.get('csrf_token'))
         token = request.form.get('csrf_token')
         app.logger.info(f"受信したトークン: {token}, セッショントークン: {csrf_token}")
         
@@ -1634,6 +1668,7 @@ def login():
                 
                 # 管理者情報をセッションに設定
                 session['admin_logged_in'] = True
+                session['user_id'] = 'admin'  # 管理者用のユーザーID
                 session['admin_username'] = username
                 session['is_paid_member'] = True  # 管理者は有料会員の権限も持つ
                 session['login_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1666,41 +1701,35 @@ def login():
                 app.logger.info(f"Cookie設定 - SESSION_COOKIE_DOMAIN: {app.config.get('SESSION_COOKIE_DOMAIN')}")
                 app.logger.info(f"Cookie設定 - SESSION_COOKIE_SAMESITE: {app.config.get('SESSION_COOKIE_SAMESITE')}")
                 
-                # レスポンスにCookieを確実に設定するための処理
-                response = make_response(redirect(redirect_url))
-                if '_flashes' in session:
-                    app.logger.info(f"Flashメッセージがセッションに存在します: {session['_flashes']}")
-                
-                return response
+                # リダイレクトを返す
+                return redirect(redirect_url)
             else:
-                app.logger.info("認証失敗: ユーザー名またはパスワードが不正です")
-                flash('ユーザー名またはパスワードが正しくありません', 'danger')
+                app.logger.warning(f"認証失敗: ユーザー名またはパスワードが間違っています。入力: {username}")
+                flash('ユーザー名またはパスワードが間違っています', 'error')
         else:
-            app.logger.info(f"CSRF検証失敗またはフォーム検証エラー: {form.errors}")
-            flash('CSRFトークンが無効か、フォームにエラーがあります', 'danger')
+            # バリデーションエラーの詳細をログに出力
+            app.logger.warning(f"フォームバリデーションエラー: {form.errors}")
+            if 'csrf_token' in form.errors:
+                app.logger.error(f"CSRFトークンエラー: {form.errors['csrf_token']}")
+                flash('セキュリティトークンが無効です。ページを再読み込みして再試行してください。', 'error')
+            else:
+                for field, errors in form.errors.items():
+                    for error in errors:
+                        flash(f"{field}: {error}", 'error')
     
-    # セッション状態をログに出力
-    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
-    app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
+    # GETリクエストまたはPOSTリクエストでエラーがあった場合
+    # 新しいCSRFトークンを生成して確実にセッションに保存
+    if '_csrf_token' not in session:
+        csrf_token = generate_csrf()
+        session['_csrf_token'] = csrf_token
+        app.logger.info(f"新しいCSRFトークンを生成: {csrf_token}")
     
-    # PayPalモードを取得（デフォルトはsandbox）
-    paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
+    # セッションを確実に保存
+    session.modified = True
     
-    # ユーザー権限情報
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
-    
-    # 本番モードでの制限表示フラグ
-    show_restrictions = paypal_mode.lower() != 'sandbox' and not (is_admin or is_paid_member)
-    
-    return render_template('login.html', 
-                          form=form,
-                          next=next_page,
-                          mode=paypal_mode, 
-                          paypal_mode=paypal_mode,
-                          is_admin=is_admin,
-                          is_paid_member=is_paid_member,
-                          show_restrictions=show_restrictions)
+    # ログインページを表示
+    return render_template('login.html', form=form, next=next_page)
+
 @app.route('/logout')
 def logout():
     """
@@ -1725,8 +1754,20 @@ def settings():
     # セッション情報をログ出力
     logger.info(f"設定ページ表示時のセッション状態: {session}")
     
-    # 現在の設定を取得
+    # ユーザーIDを決定（管理者の場合は'admin'、それ以外はセッションIDを使用）
+    user_id = 'admin' if session.get('admin_logged_in', False) else session.get('user_id', session.sid)
+    
+    # データベースからユーザー固有の設定を取得
+    user_settings = database.get_user_settings(user_id)
+    
+    # 従来の設定も取得（互換性のため）
     config = get_config()
+    
+    # ユーザー設定をconfigにマージ（データベースの設定を優先）
+    if user_settings:
+        config['client_id'] = user_settings.get('client_id', config.get('client_id', ''))
+        config['client_secret'] = user_settings.get('client_secret', config.get('client_secret', ''))
+        config['paypal_mode'] = user_settings.get('paypal_mode', config.get('paypal_mode', 'sandbox'))
     
     # PayPalモードを取得（デフォルトはsandbox）
     paypal_mode = config.get('paypal_mode', 'sandbox')
@@ -1734,7 +1775,7 @@ def settings():
     is_paid_member = session.get('is_paid_member', False)
     
     # 権限情報をログ出力
-    logger.info(f"設定ページ表示時の権限情報 - is_admin: {is_admin}, is_paid_member: {is_paid_member}")
+    logger.info(f"設定ページ表示時の権限情報 - is_admin: {is_admin}, is_paid_member: {is_paid_member}, user_id: {user_id}")
     
     # 本番モードで非管理者かつ非有料会員の場合はアクセス制限
     if paypal_mode == 'live' and not (is_admin or is_paid_member):
@@ -1748,7 +1789,7 @@ def settings():
             client_id = config.get('client_id', '')
             client_secret = config.get('client_secret', '')
             if client_id and client_secret:
-                token = get_paypal_access_token(client_id, client_secret, paypal_mode)
+                token = get_paypal_access_token(client_id, client_secret, paypal_mode, user_id)
                 paypal_status = bool(token)
         except Exception as e:
             logger.error(f"PayPal API接続テストエラー: {str(e)}")
@@ -1948,14 +1989,15 @@ def delete_history():
                                 try:
                                     logger.info(f"PayPal注文キャンセル処理開始: {token}")
                                     
-                                    # PayPalのアクセストークンを取得
-                                    access_token = get_paypal_access_token()
+                                    # 管理者権限でPayPalのアクセストークンを取得
+                                    user_id = 'admin'  # 注文キャンセルは管理者権限で行う
+                                    access_token = get_paypal_access_token(user_id=user_id)
                                     if not access_token:
                                         logger.error(f"PayPalアクセストークン取得失敗のため、注文キャンセルをスキップ: {token}")
                                         continue
                                     
                                     # APIベースURLとヘッダーを設定
-                                    api_base = get_api_base()
+                                    api_base = get_api_base(user_id)
                                     headers = {
                                         'Content-Type': 'application/json',
                                         'Authorization': f'Bearer {access_token}',
@@ -2063,14 +2105,15 @@ def delete_all_history_with_paypal():
                             try:
                                 logger.info(f"PayPal注文キャンセル処理開始: {token}")
                                 
-                                # PayPalのアクセストークンを取得
-                                access_token = get_paypal_access_token()
+                                # 管理者権限でPayPalのアクセストークンを取得
+                                user_id = 'admin'  # 注文キャンセルは管理者権限で行う
+                                access_token = get_paypal_access_token(user_id=user_id)
                                 if not access_token:
                                     logger.error(f"PayPalアクセストークン取得失敗のため、注文キャンセルをスキップ: {token}")
                                     continue
                                 
                                 # APIベースURLとヘッダーを設定
-                                api_base = get_api_base()
+                                api_base = get_api_base(user_id)
                                 headers = {
                                     'Content-Type': 'application/json',
                                     'Authorization': f'Bearer {access_token}',
@@ -2149,7 +2192,7 @@ _api_base_cache = {
     "last_updated": 0
 }
 
-def get_api_base():
+def get_api_base(user_id=None):
     """
     PayPal APIのベースURLを取得する
     キャッシュ機能とエラーハンドリングを実装
@@ -2160,9 +2203,24 @@ def get_api_base():
     global _api_base_cache
     
     try:
-        # 設定からPayPalモードを取得
-        config = get_config()
-        paypal_mode = config.get('paypal_mode', 'sandbox')
+        paypal_mode = 'sandbox'  # デフォルトは安全なsandboxモード
+        
+        # ユーザーIDが指定されている場合はデータベースから取得を試みる
+        if user_id:
+            try:
+                user_settings = database.get_user_settings(user_id)
+                if user_settings and 'paypal_mode' in user_settings:
+                    paypal_mode = user_settings['paypal_mode']
+                    logger.debug(f"データベースからPayPalモードを取得: {paypal_mode} (ユーザーID: {user_id})")
+            except Exception as db_error:
+                logger.error(f"データベースからのPayPalモード取得エラー: {str(db_error)}")
+        
+        # データベースから取得できなかった場合は設定ファイルから取得
+        if not paypal_mode or paypal_mode == 'sandbox':
+            config = get_config()
+            config_mode = config.get('paypal_mode', 'sandbox')
+            if config_mode == 'live':
+                paypal_mode = config_mode
         
         # モードの正規化
         if paypal_mode.lower() not in ['sandbox', 'live']:
@@ -2189,7 +2247,7 @@ def get_api_base():
         logger.error(f"PayPal APIベースURL取得エラー: {str(e)}")
         return "https://api-m.sandbox.paypal.com"  # 安全なデフォルト値
 
-def create_paypal_payment_link(amount, customer, request=None):
+def create_paypal_payment_link(amount, customer, request=None, user_id=None):
     """
     PayPal決済リンクを生成する
     
@@ -2200,9 +2258,41 @@ def create_paypal_payment_link(amount, customer, request=None):
     Returns:
         PayPal決済リンクのURL
     """
-    config = get_config()
-    client_id = config.get('paypal_client_id', '')
-    client_secret = config.get('paypal_client_secret', '')
+    # ユーザーIDが指定されていない場合は、セッションから取得を試みる
+    if user_id is None and request and hasattr(request, 'session'):
+        user_id = request.session.get('user_id', 'guest')
+        if request.session.get('admin_logged_in', False):
+            user_id = 'admin'
+    
+    # データベースからユーザー固有の設定を取得
+    client_id = ''
+    client_secret = ''
+    paypal_mode = 'sandbox'
+    
+    if user_id:
+        try:
+            user_settings = database.get_user_settings(user_id)
+            if user_settings:
+                client_id = user_settings.get('client_id', '')
+                client_secret = user_settings.get('client_secret', '')
+                paypal_mode = user_settings.get('paypal_mode', 'sandbox')
+                logger.info(f"ユーザー {user_id} の設定をデータベースから取得しました")
+        except Exception as e:
+            logger.error(f"データベースからの設定取得エラー: {str(e)}")
+    
+    # データベースから取得できなかった場合は、従来のJSON設定ファイルから取得
+    if not client_id or not client_secret:
+        config = get_config()
+        if not client_id:
+            client_id = config.get('client_id', '')
+            if not client_id:
+                client_id = config.get('paypal_client_id', '')
+        if not client_secret:
+            client_secret = config.get('client_secret', '')
+            if not client_secret:
+                client_secret = config.get('paypal_client_secret', '')
+        if not paypal_mode:
+            paypal_mode = config.get('paypal_mode', 'sandbox')
     
     if not client_id or not client_secret:
         logger.warning("PayPal Client IDまたはClient Secretが設定されていません")
@@ -2246,7 +2336,6 @@ def create_paypal_payment_link(amount, customer, request=None):
         formatted_amount = "1000"
     
     # PayPalモードに基づいてベースURLを設定
-    paypal_mode = config.get('paypal_mode', 'sandbox')
     api_base = "https://api-m.sandbox.paypal.com" if paypal_mode == "sandbox" else "https://api-m.paypal.com"
     
     # 顧客名が空の場合のデフォルト値
@@ -2256,6 +2345,7 @@ def create_paypal_payment_link(amount, customer, request=None):
     customer_name = urllib.parse.quote(customer_name)
     
     # 通貨コード
+    config = get_config()  # 通貨コードなどのその他の設定は引き続きJSON設定ファイルから取得
     currency_code = config.get('currency_code', 'JPY')
     
     # リトライ回数
@@ -2266,7 +2356,7 @@ def create_paypal_payment_link(amount, customer, request=None):
         try:
             # get_paypal_access_token関数を使用してアクセストークンを取得
             try:
-                access_token = get_paypal_access_token()
+                access_token = get_paypal_access_token(client_id, client_secret, paypal_mode, user_id)
             except Exception as token_err:
                 logger.error(f"PayPalアクセストークン取得中に例外が発生: {str(token_err)}")
                 access_token = None
@@ -2456,7 +2546,7 @@ def create_paypal_payment_link(amount, customer, request=None):
         logger.error(f"フォールバック決済リンク生成エラー: {str(e)}")
         return ''
 
-def check_payment_status(order_id):
+def check_payment_status(order_id, user_id=None):
     """
     PayPal APIを使用して決済状態を確認する
     
@@ -2473,8 +2563,12 @@ def check_payment_status(order_id):
             
         logger.info(f"PayPal決済状態確認開始: オーダーID={order_id}")
             
+        # ユーザーIDが指定されていない場合は、デフォルトの管理者設定を使用
+        if user_id is None:
+            user_id = 'admin'  # 支払い状態確認は管理者権限で行うことが多い
+        
         # アクセストークン取得
-        access_token = get_paypal_access_token()
+        access_token = get_paypal_access_token(user_id=user_id)
         if not access_token:
             logger.error("PayPalアクセストークン取得失敗")
             return "UNKNOWN"
@@ -2486,7 +2580,7 @@ def check_payment_status(order_id):
             "Cache-Control": "no-cache"
         }
         
-        api_base = get_api_base()
+        api_base = get_api_base(user_id)
         order_url = f"{api_base}/v2/checkout/orders/{order_id}"
         logger.info(f"PayPal API呼び出し: {order_url}")
         
@@ -2562,8 +2656,13 @@ def generate_payment_link():
         
         logger.info(f"決済リンク生成リクエスト: 顧客名={customer}, 金額={amount}, ファイル名={filename}")
         
+        # ユーザーIDを取得
+        user_id = session.get('user_id', 'guest')
+        if session.get('admin_logged_in', False):
+            user_id = 'admin'
+            
         # create_paypal_payment_link関数を使用して決済リンクを生成
-        payment_link = create_paypal_payment_link(amount, customer, request)
+        payment_link = create_paypal_payment_link(amount, customer, request, user_id)
         
         if payment_link:
             return jsonify({
@@ -2584,11 +2683,80 @@ def generate_payment_link():
         }), 500
 
 # 単一PDFファイルの処理
+def check_paypal_api_connection(user_id=None):
+    """PayPal APIの接続状態を確認する
+    
+    ユーザーIDに基づいてPayPal APIの接続状態を確認し、接続状態を返す
+    
+    Args:
+        user_id (str, optional): ユーザーID。デフォルトはNone
+        
+    Returns:
+        dict: 接続状態を表す辞書
+            - connected (bool): 接続されているかどうか
+            - message (str): 接続状態に関するメッセージ
+    """
+    try:
+        logger.info(f"PayPal API接続状態確認: user_id={user_id}")
+        
+        # ユーザーIDが指定されていない場合はセッションから取得
+        if user_id is None:
+            user_id = session.get('user_id', 'guest')
+            if session.get('admin_logged_in', False):
+                user_id = 'admin'
+        
+        # データベースからユーザー設定を取得
+        user_settings = database.get_user_settings(user_id)
+        
+        # クライアントIDとシークレットを取得
+        client_id = user_settings.get('paypal_client_id', '')
+        client_secret = user_settings.get('paypal_client_secret', '')
+        paypal_mode = user_settings.get('paypal_mode', 'sandbox')
+        
+        # クライアントIDとシークレットが設定されていない場合は環境変数から取得
+        if not client_id or not client_secret:
+            config = get_config()
+            client_id = config.get('paypal_client_id', '')
+            client_secret = config.get('paypal_client_secret', '')
+            paypal_mode = config.get('paypal_mode', 'sandbox')
+        
+        # クライアントIDとシークレットが設定されていない場合は未接続
+        if not client_id or not client_secret:
+            logger.warning("PayPal API接続状態確認: クライアントIDまたはシークレットが設定されていません")
+            return {
+                'connected': False,
+                'message': 'PayPal APIの認証情報が設定されていません'
+            }
+        
+        # アクセストークンを取得して接続テスト
+        token = get_paypal_access_token(client_id, client_secret, paypal_mode, user_id)
+        
+        if token:
+            logger.info("PayPal API接続状態確認: 接続成功")
+            return {
+                'connected': True,
+                'message': 'PayPal APIに正常に接続されています'
+            }
+        else:
+            logger.warning("PayPal API接続状態確認: 接続失敗")
+            return {
+                'connected': False,
+                'message': 'PayPal APIに接続できません'
+            }
+    
+    except Exception as e:
+        logger.error(f"PayPal API接続状態確認エラー: {str(e)}")
+        return {
+            'connected': False,
+            'message': f'PayPal API接続確認中にエラーが発生しました: {str(e)}'
+        }
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """PDFファイルをアップロードするエンドポイント
     
     フロントエンドからアップロードされたPDFファイルを保存し、ファイル名を返す
+    アップロード前にPayPal API接続状態を確認し、未接続の場合は処理を中止する
     """
     logger.info("ファイルアップロードリクエストを受信")
     logger.info(f"リクエストタイプ: {request.content_type}")
@@ -2597,6 +2765,19 @@ def upload_file():
     logger.info(f"リクエストデータ: {request.data}")
     
     try:
+        # PayPal API接続状態を確認
+        user_id = session.get('user_id', 'guest')
+        if session.get('admin_logged_in', False):
+            user_id = 'admin'
+        
+        api_status = check_paypal_api_connection(user_id)
+        if not api_status['connected']:
+            logger.error(f"PayPal API未接続のためPDF処理を中止: {api_status['message']}")
+            return jsonify({
+                'success': False,
+                'error': f'PayPal APIが未接続です。設定画面でAPIを接続してください。: {api_status["message"]}'
+            }), 400
+        
         # ファイルが存在するか確認
         if 'file' not in request.files:
             logger.error("ファイルが見つかりません")
@@ -2703,15 +2884,14 @@ def process_single_pdf(filepath, filename, request):
             if amount_str and amount_str != '0':
                 logger.info(f"PayPal決済リンク生成開始: 金額={amount_str}, 顧客={customer_name}")
                 try:
-                    # 設定情報を確認
-                    config = get_config()
-                    client_id = config.get('paypal_client_id', '')
-                    client_secret = config.get('paypal_client_secret', '')
-                    if not client_id or not client_secret:
-                        logger.warning("PayPal認証情報が設定されていません")
-                        raise ValueError("PayPal認証情報が設定されていません")
+                    # ユーザーIDを取得し、データベースから認証情報を取得するための準備
                         
-                    payment_link = create_paypal_payment_link(amount_str, customer_name, request)
+                    # ユーザーIDを取得
+                    user_id = request.session.get('user_id', 'guest') if request and hasattr(request, 'session') else 'guest'
+                    if request and hasattr(request, 'session') and request.session.get('admin_logged_in', False):
+                        user_id = 'admin'
+                    
+                    payment_link = create_paypal_payment_link(amount_str, customer_name, request, user_id)
                     if payment_link:
                         logger.info(f"決済リンク生成成功: {payment_link}")
                     else:
@@ -2910,65 +3090,60 @@ def process_pdf():
             'error': f'PDF処理中にエラーが発生しました: {str(e)}'
         }), 500
 
-
-
-# 設定の保存
 @app.route('/settings/save', methods=['POST'])
 def save_settings():
-    """設定を保存する
-    
-    フォームから送信された設定をJSONファイルに保存する
-    管理者はすべての設定を変更可能
-    ゲストユーザーはsandboxモードのみ変更可能
     """
-    logger.info("設定保存リクエストを受信")
+    設定を保存する
     
+    設定をデータベースとJSONファイル（互換性のため）に保存する
+    """
+    client_id = request.form.get('client_id', '')
+    client_secret = request.form.get('client_secret', '')
+    paypal_mode = request.form.get('paypal_mode', 'sandbox')
+    admin_email = request.form.get('admin_email', '')
+    
+    # ユーザーIDを決定（管理者の場合は'admin'、それ以外はセッションIDを使用）
+    is_admin = session.get('admin_logged_in', False)
+    user_id = 'admin' if is_admin else session.get('user_id', session.sid)
+    
+    # 権限チェック - 本番環境の設定は管理者のみ許可
+    if paypal_mode == 'live' and not is_admin:
+        flash('本番環境の設定変更は管理者のみ許可されています', 'warning')
+        return redirect(url_for('settings'))
+    
+    # データベースに設定を保存
     try:
-        # フォームデータを取得
-        client_id = request.form.get('client_id', '')
-        client_secret = request.form.get('client_secret', '')
-        paypal_mode = request.form.get('paypal_mode', 'sandbox')
-        admin_email = request.form.get('admin_email', '')
+        # 管理者の場合はすべての設定を保存、一般ユーザーはsandboxモードのみ
+        if is_admin:
+            # 管理者は全ての設定を保存
+            database.save_user_settings(user_id, client_id, client_secret, paypal_mode)
+            # 環境変数も更新（グローバル設定として）
+            os.environ['PAYPAL_MODE'] = paypal_mode
+            os.environ['ADMIN_EMAIL'] = admin_email
+        else:
+            # 一般ユーザーはsandboxモードのみ保存可能
+            database.save_user_settings(user_id, client_id, client_secret, 'sandbox')
         
-        # 現在の設定を取得
+        logger.info(f"ユーザー {user_id} の設定をデータベースに保存しました")
+        
+        # 互換性のためにJSONファイルにも保存
         config = get_config()
-        
-        # 管理者権限チェック
-        is_admin = session.get('admin_logged_in', False)
-        
-        # 本番モードへの変更は管理者のみ許可
-        if paypal_mode == 'live' and not is_admin:
-            flash('本番環境の設定変更は管理者のみ許可されています', 'warning')
-            return redirect(url_for('settings'))
-        
-        # 管理者の場合はすべての設定を更新
         if is_admin:
             config['client_id'] = client_id
             config['client_secret'] = client_secret
             config['paypal_mode'] = paypal_mode
             config['admin_email'] = admin_email
-            
-            # 環境変数にも反映
-            os.environ['PAYPAL_MODE'] = paypal_mode
-            os.environ['ADMIN_EMAIL'] = admin_email
-        # ゲストの場合はsandboxモードの設定のみ更新
         else:
-            # 現在のモードを維持（sandboxのみ許可）
             config['client_id'] = client_id
             config['client_secret'] = client_secret
-            # paypal_modeは変更しない（sandboxのまま）
-        
-        # 設定を保存
         save_config(config)
         
         flash('設定が保存されました', 'success')
         logger.info("設定が正常に保存されました")
-        
         return redirect(url_for('settings'))
-        
     except Exception as e:
-        flash(f'設定の保存中にエラーが発生しました: {str(e)}', 'error')
-        logger.error(f"設定保存エラー: {str(e)}")
+        logger.error(f"設定保存中にエラーが発生しました: {str(e)}")
+        flash('設定の保存に失敗しました', 'danger')
         return redirect(url_for('settings'))
 
 # 接続テスト
@@ -2995,8 +3170,13 @@ def test_connection():
         
         logger.info(f"PayPal接続テスト: モード={paypal_mode}")
         
+        # ユーザーIDを取得
+        user_id = session.get('user_id', 'guest')
+        if session.get('admin_logged_in', False):
+            user_id = 'admin'
+        
         # アクセストークンを取得して接続テスト
-        token = get_paypal_access_token(client_id, client_secret, paypal_mode)
+        token = get_paypal_access_token(client_id, client_secret, paypal_mode, user_id)
         
         if token:
             logger.info("PayPal API接続テスト成功")
