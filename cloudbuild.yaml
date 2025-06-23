@@ -1,0 +1,60 @@
+# Google Cloud Build設定ファイル
+# 自動ビルドとデプロイを行う
+
+steps:
+  # 1. Dockerイメージをビルド
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/pdf-paypal-system/app:$COMMIT_SHA',
+      '-t', 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/pdf-paypal-system/app:latest',
+      '.'
+    ]
+  
+  # 2. Artifact Registryにプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      'asia-northeast1-docker.pkg.dev/$PROJECT_ID/pdf-paypal-system/app:$COMMIT_SHA'
+    ]
+  
+  # 3. Artifact Registryにlatestタグでプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      'asia-northeast1-docker.pkg.dev/$PROJECT_ID/pdf-paypal-system/app:latest'
+    ]
+  
+  # 4. Cloud Runにデプロイ
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args: [
+      'run', 'deploy', 'pdf-paypal-system',
+      '--image', 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/pdf-paypal-system/app:$COMMIT_SHA',
+      '--region', 'asia-northeast1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--port', '8080',
+      '--memory', '2Gi',
+      '--cpu', '2',
+      '--timeout', '300',
+      '--max-instances', '100',
+      '--concurrency', '1000',
+      '--set-env-vars', 'FLASK_DEBUG=false,FLASK_ENV=production,USE_TEMP_DIR=true,GOOGLE_CLOUD=true,SECRET_KEY=5b79ee7c922081eeee7b5b69d7e61014f4396ec953c258750028f95102ef83c4,ENABLE_CSRF_PROTECTION=true,ENABLE_SECURE_HEADERS=true,PAYPAL_MODE=sandbox,DEFAULT_CURRENCY=JPY,SESSION_LIFETIME=30'
+    ]
+
+# ビルドのタイムアウト設定
+timeout: '1800s'
+
+# ビルドオプション
+options:
+  # ビルドマシンのスペック
+  machineType: 'E2_HIGHCPU_8'
+  # ログ出力設定
+  logging: CLOUD_LOGGING_ONLY
+  # 並列ビルド
+  substitution_option: 'ALLOW_LOOSE'
+
+# 置換変数
+substitutions:
+  _SERVICE_NAME: 'pdf-paypal-system'
+  _REGION: 'asia-northeast1'

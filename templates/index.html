@@ -625,6 +625,8 @@
                         </div>
                         
                         <form action="/upload" method="post" enctype="multipart/form-data" id="upload-form">
+                            <!-- CSRF トークンを追加 -->
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <div class="drag-area animate__animated animate__pulse animate__infinite animate__slower" id="drag-area">
                                 <div class="icon mb-3">
                                     <i class="bi bi-cloud-arrow-up-fill fs-1 text-primary"></i>

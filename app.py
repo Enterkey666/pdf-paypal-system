@@ -50,6 +50,27 @@ from dotenv import load_dotenv
 # ロガーの初期化
 logger = logging.getLogger(__name__)
 
+# Windows環境でUTF-8エンコーディングを使用するためのカスタムStreamHandlerクラス
+class UTF8StreamHandler(logging.StreamHandler):
+    def __init__(self, stream=None):
+        # io.StringIOを使用してUTF-8エンコードされたバッファを作成
+        self.encoding = 'utf-8'
+        super().__init__(stream)
+        
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            # エンコードエラーを回避するためのエラーハンドリング
+            try:
+                stream.write(msg + self.terminator)
+            except UnicodeEncodeError:
+                # エンコードエラーが発生した場合は、代替文字に置き換える
+                stream.write(msg.encode('cp932', errors='replace').decode('cp932') + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
 # ロガーのセットアップ関数
 def setup_logger():
     logger = logging.getLogger(__name__)
@@ -61,8 +82,8 @@ def setup_logger():
     file_handler = logging.FileHandler(os.path.join(log_dir, 'app.log'), encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     
-    # コンソールハンドラの設定
-    console_handler = logging.StreamHandler()
+    # UTF-8対応コンソールハンドラの設定
+    console_handler = UTF8StreamHandler()
     console_handler.setLevel(logging.INFO)
     
     # フォーマッタの設定

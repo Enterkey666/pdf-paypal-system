@@ -1,0 +1,65 @@
+# Google App Engine設定ファイル（Cloud Runを使わない場合）
+
+runtime: python39
+
+# 基本設定
+service: default
+env: standard
+
+# インスタンス設定
+automatic_scaling:
+  min_instances: 1
+  max_instances: 20
+  target_cpu_utilization: 0.6
+  target_throughput_utilization: 0.6
+
+# リソース設定
+resources:
+  cpu: 2
+  memory_gb: 4
+  disk_size_gb: 10
+
+# 環境変数
+env_variables:
+  FLASK_DEBUG: "false"
+  USE_TEMP_DIR: "true"
+  GOOGLE_CLOUD: "true"
+  UPLOAD_FOLDER: "/tmp/uploads"
+  RESULTS_FOLDER: "/tmp/results"
+  SESSION_TYPE: "filesystem"
+  SESSION_USE_SIGNER: "true"
+  SESSION_PERMANENT: "true"
+  PERMANENT_SESSION_LIFETIME: "604800"
+  WTF_CSRF_ENABLED: "true"
+
+# ハンドラー設定
+handlers:
+  # 静的ファイル
+  - url: /static
+    static_dir: static
+    secure: always
+  
+  # メインアプリケーション
+  - url: /.*
+    script: auto
+    secure: always
+
+# セッション設定
+includes:
+  - default.yaml
+
+# ヘルスチェック設定
+liveness_check:
+  path: "/health"
+  check_interval_sec: 30
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+
+readiness_check:
+  path: "/health"
+  check_interval_sec: 5
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+  app_start_timeout_sec: 300
