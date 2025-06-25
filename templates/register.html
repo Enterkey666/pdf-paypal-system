@@ -28,52 +28,32 @@
                         {% endwith %}
                         
                         <form method="POST" action="{{ url_for('auth.register') }}">
-                            {{ form.csrf_token }}
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             
                             <div class="form-group mb-3">
-                                {{ form.username.label(class="form-label") }}
-                                {{ form.username(class="form-control", id="username") }}
-                                {% if form.username.errors %}
-                                    <div class="text-danger">
-                                        {% for error in form.username.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
+                                <label for="username" class="form-label">ユーザー名</label>
+                                <input type="text" class="form-control" id="username" name="username" required>
                             </div>
                             
                             <div class="form-group mb-3">
-                                {{ form.password.label(class="form-label") }}
-                                {{ form.password(class="form-control", id="password") }}
-                                {% if form.password.errors %}
-                                    <div class="text-danger">
-                                        {% for error in form.password.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
+                                <label for="email" class="form-label">メールアドレス</label>
+                                <input type="email" class="form-control" id="email" name="email" required>
+                            </div>
+                            
+                            <div class="form-group mb-3">
+                                <label for="password" class="form-label">パスワード</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                                <small class="form-text text-muted">パスワードは8文字以上で、文字と数字を含む必要があります</small>
                             </div>
                             
                             <div class="form-group mb-4">
-                                {{ form.confirm_password.label(class="form-label") }}
-                                {{ form.confirm_password(class="form-control", id="confirm_password") }}
-                                {% if form.confirm_password.errors %}
-                                    <div class="text-danger">
-                                        {% for error in form.confirm_password.errors %}
-                                            {{ error }}
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                            </div>
-                            
-                            <div class="form-check mb-4">
-                                {{ form.is_admin(class="form-check-input", id="is_admin") }}
-                                {{ form.is_admin.label(class="form-check-label") }}
+                                <label for="confirm_password" class="form-label">パスワード（確認）</label>
+                                <input type="password" class="form-control" id="password_confirm" name="password_confirm" required>
                             </div>
                             
                             <div class="d-grid gap-2">
-                                {{ form.submit(class="btn btn-primary") }}
-                                <a href="{{ url_for('auth.user_list') }}" class="btn btn-secondary">キャンセル</a>
+                                <button type="submit" class="btn btn-primary">登録</button>
+                                <a href="{{ url_for('auth.login') }}" class="btn btn-secondary">ログインページに戻る</a>
                             </div>
                         </form>
                     </div>

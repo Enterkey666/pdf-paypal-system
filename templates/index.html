@@ -543,17 +543,24 @@
                     <li class="nav-item mx-1">
                         <a class="nav-link rounded-pill px-3 py-2" href="/history"><i class="bi bi-clock-history me-1"></i> 履歴</a>
                     </li>
-                    {% if session.get('admin_logged_in') %}
+                    {% if current_user.is_authenticated %}
                     <li class="nav-item mx-1">
-                        <a class="nav-link rounded-pill px-3 py-2 bg-danger text-white" href="/logout"><i class="bi bi-box-arrow-right me-1"></i> ログアウト</a>
+                        <a class="nav-link rounded-pill px-3 py-2 bg-danger text-white" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right me-1"></i> ログアウト</a>
                     </li>
-                    <!-- 管理者バッジ -->
+                    <!-- ユーザー情報バッジ -->
                     <li class="nav-item mx-1 d-flex align-items-center">
-                        <span class="badge bg-primary rounded-pill px-3 py-2"><i class="bi bi-shield-check me-1"></i> 管理者</span>
+                        {% if current_user.is_admin %}
+                        <span class="badge bg-primary rounded-pill px-3 py-2"><i class="bi bi-shield-check me-1"></i> 管理者: {{ current_user.username }}</span>
+                        {% else %}
+                        <span class="badge bg-info rounded-pill px-3 py-2"><i class="bi bi-person-check me-1"></i> ユーザー: {{ current_user.username }}</span>
+                        {% endif %}
                     </li>
                     {% else %}
                     <li class="nav-item mx-1">
-                        <a class="nav-link rounded-pill px-3 py-2 bg-success text-white" href="/login"><i class="bi bi-box-arrow-in-right me-1"></i> 管理者ログイン</a>
+                        <a class="nav-link rounded-pill px-3 py-2 bg-success text-white" href="{{ url_for('auth.login') }}"><i class="bi bi-box-arrow-in-right me-1"></i> ログイン</a>
+                    </li>
+                    <li class="nav-item mx-1">
+                        <a class="nav-link rounded-pill px-3 py-2 bg-info text-white" href="{{ url_for('auth.register') }}"><i class="bi bi-person-plus me-1"></i> 新規登録</a>
                     </li>
                     <!-- ゲストバッジ -->
                     <li class="nav-item mx-1 d-flex align-items-center">

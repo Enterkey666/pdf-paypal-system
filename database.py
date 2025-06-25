@@ -13,6 +13,7 @@ import logging
 import secrets
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import UserMixin
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
@@ -125,9 +126,51 @@ def create_default_admin():
     finally:
         conn.close()
 
+# Flask-Login用のユーザークラス
+class User(UserMixin):
+    def __init__(self, id, username, email, password_hash, is_admin=False, is_active=True, is_paid_member=False):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.password_hash = password_hash
+        self.is_admin = is_admin
+        self._is_active = is_active  # プライベート変数として保存
+        self.is_paid_member = is_paid_member
+    
+    def get_id(self):
+        return str(self.id)
+    
+    def check_password(self, password):
+        # 簡易ハッシュ化されたパスワードの場合
+        if self.password_hash.startswith('simple:'):
+            import hashlib
+            simple_hash = self.password_hash[7:]  # 'simple:' プレフィックスを除去
+            return simple_hash == hashlib.sha256(password.encode()).hexdigest()
+        # 通常のWerkzeugハッシュの場合
+        return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_authenticated(self):
+        return True
+    
+    @property
+    def is_active(self):
+        """Flask-LoginのUserMixinのis_activeプロパティをオーバーライド"""
+        return self._is_active
+
 # ユーザー管理関数
 def create_user(username, password, email=None, is_admin=False):
-    """新しいユーザーを作成"""
+    """新しいユーザーを作成
+    
+    Args:
+        username (str): ユーザー名
+        password (str): パスワード
+        email (str, optional): メールアドレス
+        is_admin (bool, optional): 管理者権限を付与するかどうか
+        
+    Returns:
+        tuple: (成功したかどうか, メッセージまたはユーザーID)
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -145,7 +188,7 @@ def create_user(username, password, email=None, is_admin=False):
         
         # ユーザーを作成
         cursor.execute(
-            "INSERT INTO users (username, password_hash, email, is_admin) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (username, password_hash, email, is_admin, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             (username, generate_password_hash(password), email, is_admin)
         )
         conn.commit()
@@ -210,11 +253,27 @@ def get_user(user_id):
     finally:
         conn.close()
 
-def admin_user_exists():
-    """管理者権限を持つユーザーが存在するか確認
+def get_user_count():
+    """登録されているユーザー数を取得する
     
     Returns:
-        bool: 管理者権限を持つユーザーが存在すればTrue、それ以外はフォールFalse
+        int: ユーザー数
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT COUNT(*) FROM users')
+        count = cursor.fetchone()[0]
+        return count
+    finally:
+        cursor.close()
+        conn.close()
+
+def has_admin_user():
+    """管理者ユーザーが存在するか確認する
+    
+    Returns:
+        bool: 管理者ユーザーが存在すればTrue
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -234,26 +293,29 @@ def get_user_by_username(username):
         username (str): ユーザー名
         
     Returns:
-        dict or None: ユーザー情報、ユーザーが見つからない場合はNone
+        User: ユーザーオブジェクト、存在しない場合はNone
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT id, username, password_hash, is_admin, created_at FROM users WHERE username = ?', (username,))
+        cursor.execute('SELECT id, username, email, password_hash, is_admin, is_active FROM users WHERE username = ?', (username,))
         user = cursor.fetchone()
         if user:
-            return {
-                'id': user[0],
-                'username': user[1],
-                'password_hash': user[2],
-                'is_admin': bool(user[3]),
-                'created_at': user[4]
-            }
+            # Userオブジェクトを作成して返す（有料会員機能は今回は無効）
+            return User(
+                id=user[0],
+                username=user[1],
+                email=user[2],
+                password_hash=user[3],
+                is_admin=bool(user[4]),
+                is_active=bool(user[5]),
+                is_paid_member=False
+            )
         return None
     finally:
         cursor.close()
         conn.close()
-        
+
 def get_user_by_id(user_id):
     """ユーザーIDからユーザー情報を取得する
     
@@ -261,50 +323,84 @@ def get_user_by_id(user_id):
         user_id (int): ユーザーID
         
     Returns:
-        dict or None: ユーザー情報、ユーザーが見つからない場合はNone
+        User: ユーザーオブジェクト、存在しない場合はNone
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute('SELECT id, username, password_hash, is_admin, created_at FROM users WHERE id = ?', (user_id,))
+        cursor.execute("SELECT id, username, email, password_hash, is_admin, is_active FROM users WHERE id = ?", (user_id,))
         user = cursor.fetchone()
         if user:
-            return {
-                'id': user[0],
-                'username': user[1],
-                'password_hash': user[2],
-                'is_admin': bool(user[3]),
-                'created_at': user[4]
-            }
+            # Userオブジェクトを作成して返す（有料会員機能は今回は無効）
+            return User(
+                id=user[0],
+                username=user[1],
+                email=user[2],
+                password_hash=user[3],
+                is_admin=bool(user[4]),
+                is_active=bool(user[5]),
+                is_paid_member=False
+            )
         return None
     finally:
         cursor.close()
         conn.close()
 
-def create_user(username, password_hash, is_admin=False):
-    """新規ユーザーを作成する
+def get_user_by_email(email):
+    """メールアドレスからユーザー情報を取得する
     
     Args:
-        username (str): ユーザー名
-        password_hash (str): パスワードハッシュ
-        is_admin (bool): 管理者権限フラグ
+        email (str): メールアドレス
         
     Returns:
-        int: 作成されたユーザーID
+        User: ユーザーオブジェクト、存在しない場合はNone
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute(
-            'INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)',
-            (username, password_hash, 1 if is_admin else 0, now)
-        )
-        conn.commit()
-        return cursor.lastrowid
+        cursor.execute("SELECT id, username, email, password_hash, is_admin, is_active FROM users WHERE email = ?", (email,))
+        user = cursor.fetchone()
+        if user:
+            # Userオブジェクトを作成して返す（有料会員機能は今回は無効）
+            return User(
+                id=user[0],
+                username=user[1],
+                email=user[2],
+                password_hash=user[3],
+                is_admin=bool(user[4]),
+                is_active=bool(user[5]),
+                is_paid_member=False
+            )
+        return None
     finally:
         cursor.close()
         conn.close()
+
+def update_last_login(user_id):
+    """ユーザーの最終ログイン時間を更新する
+    
+    Args:
+        user_id (int): ユーザーID
+        
+    Returns:
+        bool: 更新が成功したかどうか
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        now = datetime.now().isoformat()
+        cursor.execute("UPDATE users SET last_login = ? WHERE id = ?", (now, user_id))
+        conn.commit()
+        
+        logger.info(f"ユーザーID {user_id} の最終ログイン時間を更新しました")
+        return True
+    except Exception as e:
+        logger.error(f"最終ログイン時間更新エラー: {str(e)}")
+        return False
+    finally:
+        conn.close()
+
 
 def update_user_password(user_id, new_password_hash):
     """ユーザーのパスワードを更新する
@@ -407,8 +503,8 @@ def get_or_create_google_user(email, name, picture):
         cursor.close()
         conn.close()
         
-def ensure_google_user_table():
-    """ユーザーテーブルにGoogle認証関連のカラムがあるか確認し、なければ追加する
+def ensure_user_table():
+    """ユーザーテーブルに必要なカラムがあるか確認し、なければ追加する
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -420,33 +516,60 @@ def ensure_google_user_table():
         
         # 必要なカラムを追加
         if 'email' not in column_names:
-            cursor.execute('ALTER TABLE users ADD COLUMN email TEXT')
+            cursor.execute('ALTER TABLE users ADD COLUMN email TEXT UNIQUE')
             logger.info("usersテーブルにemailカラムを追加しました")
             
-        if 'oauth_provider' not in column_names:
-            cursor.execute('ALTER TABLE users ADD COLUMN oauth_provider TEXT')
-            logger.info("usersテーブルにoauth_providerカラムを追加しました")
+        if 'last_login' not in column_names:
+            cursor.execute('ALTER TABLE users ADD COLUMN last_login TIMESTAMP')
+            logger.info("usersテーブルにlast_loginカラムを追加しました")
             
-        if 'picture_url' not in column_names:
-            cursor.execute('ALTER TABLE users ADD COLUMN picture_url TEXT')
-            logger.info("usersテーブルにpicture_urlカラムを追加しました")
+        if 'is_active' not in column_names:
+            cursor.execute('ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1')
+            logger.info("usersテーブルにis_activeカラムを追加しました")
             
         if 'updated_at' not in column_names:
-            cursor.execute('ALTER TABLE users ADD COLUMN updated_at TEXT')
+            cursor.execute('ALTER TABLE users ADD COLUMN updated_at TIMESTAMP')
             logger.info("usersテーブルにupdated_atカラムを追加しました")
             
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"Googleユーザーテーブル更新エラー: {str(e)}")
+        logger.error(f"ユーザーテーブル更新エラー: {str(e)}")
         return False
     finally:
         cursor.close()
         conn.close()
 
+def change_password(user_id, new_password):
+    """ユーザーのパスワードを変更する
+    
+    Args:
+        user_id (int): ユーザーID
+        new_password (str): 新パスワード
+        
+    Returns:
+        bool: パスワード変更成功したかどうか
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 新パスワードのハッシュ化と更新
+        new_password_hash = generate_password_hash(new_password)
+        cursor.execute('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+                       (new_password_hash, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"パスワード変更エラー: {str(e)}")
+        return False
+    finally:
+        conn.close()
+
 # PayPal設定管理関数
 def save_paypal_settings(user_id, settings):
     """ユーザーのPayPal設定を保存
+{{ ... }}
     
     Args:
         user_id (int): ユーザーID

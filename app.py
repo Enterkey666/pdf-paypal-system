@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""PDF PayPal System
+# PDF PayPal System
+# 
+# PDFファイルから顧客情報と金額を抽出し、PayPal決済リンクを生成するシステム
 
-PDFファイルから顧客情報と金額を抽出し、PayPal決済リンクを生成するシステム
-"""
 
 # 最初にシステムパスを設定
 import os
@@ -46,6 +46,10 @@ from functools import wraps
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
+
+# PayPal支払いステータス関連のインポート
+from payment_status_checker import check_payment_status
+from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
 
 # ロガーの初期化
 logger = logging.getLogger(__name__)
@@ -192,6 +196,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, render_template, jsonify, send_from_directory, redirect, url_for, current_app, flash, session, make_response
 from flask_wtf import FlaskForm, CSRFProtect
 from flask_session import Session
+from flask_login import LoginManager, current_user, login_required
 from wtforms import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired
 from functools import wraps
@@ -199,7 +204,10 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
-# ログインフォームクラス
+# データベースモジュールからユーザー関連の関数をインポート
+from database import get_user_by_id, get_user_by_email, update_last_login
+
+# 古いログインフォームクラス（削除予定）
 class LoginForm(FlaskForm):
     username = StringField('ユーザー名', validators=[DataRequired()])
     password = PasswordField('パスワード', validators=[DataRequired()])
@@ -227,6 +235,9 @@ app.config['WTF_CSRF_ENABLED'] = True
 app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret_key)
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でのテストを可能に
 app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']  # CSRFチェック対象のHTTPメソッド
+
+# CSRF保護の初期化
+csrf = CSRFProtect(app)
 
 # セッションの設定
 app.config['SESSION_TYPE'] = 'filesystem'  # ファイルシステムベースのセッション
@@ -289,27 +300,47 @@ app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
 # ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
 
+# 支払いステータス更新機能のインポート
+try:
+    from payment_status_updater import update_pending_payment_statuses, update_payment_status_by_order_id
+    logger.info("支払いステータス更新モジュールのインポートに成功しました")
+except ImportError as e:
+    logger.error(f"支払いステータス更新モジュールのインポートに失敗: {str(e)}")
+try:
+    from payment_status_updater import update_pending_payment_statuses, update_payment_status_by_order_id
+    logger.info("payment_status_updaterモジュールのインポートに成功しました")
+except ImportError as e:
+    logger.error(f"payment_status_updaterモジュールのインポートに失敗: {e}")
+    # ダミー関数を定義
+    def update_pending_payment_statuses():
+        logger.error("payment_status_updaterモジュールがインポートできないため、支払いステータス更新はスキップされます")
+        return 0, 0
+        
+    def update_payment_status_by_order_id(order_id):
+        logger.error("payment_status_updaterモジュールがインポートできないため、支払いステータス更新はスキップされます")
+        return False, None, "モジュールがインポートできません"
+
 # 管理者認証用デコレータ
 def admin_required(f):
-    """
-    管理者権限が必要なルートに対するデコレータ
-    管理者としてログインしていない場合はログインページにリダイレクト
-    """
+    # 
+#     管理者権限が必要なルートに対するデコレータ
+#     管理者としてログインしていない場合はログインページにリダイレクト
+    
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not session.get('admin_logged_in'):
+        if not current_user.is_authenticated or not current_user.is_admin:
             flash('このページにアクセスするには管理者権限が必要です', 'error')
-            return redirect(url_for('login', next=request.url))
+            return redirect(url_for('auth.login', next=request.url))
         return f(*args, **kwargs)
     return decorated_function
 
 # 有料会員または管理者認証用デコレータ
 def paid_member_or_admin_required(f):
-    """
-    有料会員または管理者権限が必要なルートに対するデコレータ
-    本番モードでは有料会員または管理者のみアクセス可能
-    sandboxモードでは誰でもアクセス可能
-    """
+    # 
+#     有料会員または管理者権限が必要なルートに対するデコレータ
+#     本番モードでは有料会員または管理者のみアクセス可能
+#     sandboxモードでは誰でもアクセス可能
+    
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # PayPalモードを取得（デフォルトはsandbox）
@@ -321,7 +352,7 @@ def paid_member_or_admin_required(f):
             return f(*args, **kwargs)
         
         # 本番モードの場合は有料会員または管理者のみアクセス可能
-        if session.get('admin_logged_in') or session.get('is_paid_member'):
+        if current_user.is_authenticated and (current_user.is_admin or current_user.is_paid_member):
             logger.info("有料会員または管理者としてアクセス")
             return f(*args, **kwargs)
         
@@ -333,11 +364,11 @@ def paid_member_or_admin_required(f):
 
 # 外部API使用権限チェック用デコレータ
 def api_access_required(f):
-    """
-    外部API（Google、Azul、PayPal本番）の使用権限が必要なルートに対するデコレータ
-    sandboxモードでは誰でもアクセス可能
-    本番モードでは有料会員または管理者のみアクセス可能
-    """
+    # 
+#     外部API（Google、Azul、PayPal本番）の使用権限が必要なルートに対するデコレータ
+#     sandboxモードでは誰でもアクセス可能
+#     本番モードでは有料会員または管理者のみアクセス可能
+    
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # 現在の設定からPayPalモードを取得
@@ -373,9 +404,9 @@ def api_access_required(f):
 
 # Basic認証用デコレータ
 def basic_auth_required(f):
-    """
-    APIエンドポイントのBasic認証用デコレータ
-    """
+    # 
+#     APIエンドポイントのBasic認証用デコレータ
+    
     @wraps(f)
     def decorated_function(*args, **kwargs):
         auth = request.authorization
@@ -398,19 +429,19 @@ from extractors import ExtractionResult
 
 # 設定ファイルのパス
 def get_config_path():
-    """設定ファイルのパスを取得する
+    # 設定ファイルのパスを取得する
+#     
+#     設定ファイルのパスを返す
     
-    設定ファイルのパスを返す
-    """
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
 
 # 設定の読み込み
 def get_config():
-    """設定を読み込む
+    # 設定を読み込む
+#     
+#     設定ファイルから設定を読み込み、返す
+#     ファイルが存在しない場合はデフォルト設定を返す
     
-    設定ファイルから設定を読み込み、返す
-    ファイルが存在しない場合はデフォルト設定を返す
-    """
     config_path = get_config_path()
     
     # デフォルト設定
@@ -453,13 +484,13 @@ def get_config():
 
 # 設定の保存
 def save_config(config):
-    """設定を保存する
+    # 設定を保存する
+#     
+#     設定をJSONファイルに保存する
+#     
+#     Args:
+#         config: 保存する設定辞書
     
-    設定をJSONファイルに保存する
-    
-    Args:
-        config: 保存する設定辞書
-    """
     config_path = get_config_path()
     
     try:
@@ -581,12 +612,12 @@ def has_encoding_issues(text):
     return False
 
 def fix_numeric_encoding(text):
-    """数字の文字化けを修正する
+    # 数字の文字化けを修正する
+#     
+#     Adobe PDFでは数字が特殊な文字コードで表現されていることがあり、
+#     それが文字化けの原因となっている。この関数は数字の文字化けパターンを
+#     検出して修正する。
     
-    Adobe PDFでは数字が特殊な文字コードで表現されていることがあり、
-    それが文字化けの原因となっている。この関数は数字の文字化けパターンを
-    検出して修正する。
-    """
     if not text:
         return text
         
@@ -674,18 +705,18 @@ except ImportError as e:
 
 # PDFからテキストを抽出する関数
 def extract_text_from_pdf(pdf_path):
-    """
-    PDFからテキストを抽出する関数。複数の方法を試みる。
+    # 
+#     PDFからテキストを抽出する関数。複数の方法を試みる。
+#     
+#     Args:
+#         pdf_path: PDFファイルのパス
+#         
+#     Returns:
+#         dict: 抽出結果を含む辞書
+#             - text: 抽出されたテキスト
+#             - method: 使用された抽出方法
+#             - success: 抽出成功したかどうか
     
-    Args:
-        pdf_path: PDFファイルのパス
-        
-    Returns:
-        dict: 抽出結果を含む辞書
-            - text: 抽出されたテキスト
-            - method: 使用された抽出方法
-            - success: 抽出成功したかどうか
-    """
     if not os.path.exists(pdf_path):
         logger.error(f"PDFファイルが存在しません: {pdf_path}")
         return {"text": "", "method": "none", "success": False}
@@ -1040,10 +1071,10 @@ if not config.get('paypal_mode') and PAYPAL_MODE:
 
 # 設定の初期化関数をグローバルスコープに定義
 def initialize_config():
-    """
-    アプリケーションの設定を初期化する
-    デフォルト設定の作成と環境変数の読み込みを行う
-    """
+    # 
+#     アプリケーションの設定を初期化する
+#     デフォルト設定の作成と環境変数の読み込みを行う
+    
     try:
         # 現在の設定を取得
         config = get_config()
@@ -1207,33 +1238,86 @@ def index():
 # 支払い成功ページ
 @app.route('/payment_success')
 def payment_success():
-    """支払い成功時のリダイレクト先
+    # 支払い成功時のリダイレクト先
+    # PayPalの支払いが成功した場合のページ
     
-    PayPalの支払いが成功した場合のページ
-    """
-    logger.info("支払いが成功しました")
-    # 現在の日時を取得
-    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # 注文IDを生成（実際のアプリケーションではセッションから取得するなど）
-    order_id = f"ORDER-{uuid.uuid4().hex[:8].upper()}"
-    # 状態を設定
-    status = "COMPLETED"
-    # 結果を設定
-    result = "success"
-    return render_template('payment_result.html', 
-                           result=result, 
-                           status=status, 
-                           order_id=order_id, 
-                           current_time=current_time,
-                           is_pdf_export=False)
+    # PayPalからのクエリパラメータを取得
+    token = request.args.get('token')
+    payer_id = request.args.get('PayerID')
+    
+    if not token:
+        logger.error("支払い完了ページ: tokenパラメータが不足しています")
+        return render_template('payment_result.html', 
+                             result="error", 
+                             status="ERROR", 
+                             message="支払い情報が不完全です",
+                             current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                             is_pdf_export=False)
+    
+    try:
+        # PayPal APIで実際の支払い状況を確認
+        from payment_status_checker import check_payment_status
+        payment_status = check_payment_status(token)
+        
+        logger.info(f"支払い状況確認: token={token}, status={payment_status}")
+        
+        if payment_status == "COMPLETED":
+            # 支払いが実際に完了している場合
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 支払いステータスを更新
+            try:
+                from payment_status_updater import update_payment_status_by_order_id
+                success, new_status, message = update_payment_status_by_order_id(token)
+                if success:
+                    logger.info(f"支払いステータス更新成功: {message}")
+                else:
+                    logger.warning(f"支払いステータス更新失敗: {message}")
+            except Exception as e:
+                logger.error(f"支払いステータス更新エラー: {str(e)}")
+            
+            return render_template('payment_result.html', 
+                                 result="success", 
+                                 status="COMPLETED", 
+                                 order_id=token,
+                                 current_time=current_time,
+                                 is_pdf_export=False)
+        elif payment_status == "PENDING":
+            # 支払い処理中
+            return render_template('payment_result.html', 
+                                 result="pending", 
+                                 status="PENDING", 
+                                 order_id=token,
+                                 message="支払い処理中です。しばらくお待ちください。",
+                                 current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                 is_pdf_export=False)
+        else:
+            # 支払い失敗または不明
+            return render_template('payment_result.html', 
+                                 result="error", 
+                                 status=payment_status or "UNKNOWN", 
+                                 order_id=token,
+                                 message="支払い処理に問題が発生しました。",
+                                 current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                 is_pdf_export=False)
+                                 
+    except Exception as e:
+        logger.error(f"支払い完了ページ処理エラー: {str(e)}")
+        return render_template('payment_result.html', 
+                             result="error", 
+                             status="ERROR", 
+                             order_id=token,
+                             message=f"エラーが発生しました: {str(e)}",
+                             current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                             is_pdf_export=False)
 
 # 支払いキャンセルページ
 @app.route('/payment_cancel')
 def payment_cancel():
-    """支払いキャンセル時のリダイレクト先
+    # 支払いキャンセル時のリダイレクト先
+#     
+#     PayPalの支払いがキャンセルされた場合のページ
     
-    PayPalの支払いがキャンセルされた場合のページ
-    """
     logger.info("支払いがキャンセルされました")
     # 現在の日時を取得
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1253,15 +1337,15 @@ def payment_cancel():
 # 決済結果をPDFでエクスポートするエンドポイント
 @app.route('/export_pdf/<result>')
 def export_pdf(result):
-    """決済結果をPDFでエクスポートする
+    # 決済結果をPDFでエクスポートする
+#     
+#     Args:
+#         result: 'success'または'cancel'の文字列
+#         order_id: リクエストパラメータとして渡される注文ID（オプション）
+#     
+#     Returns:
+#         PDFファイルのレスポンス
     
-    Args:
-        result: 'success'または'cancel'の文字列
-        order_id: リクエストパラメータとして渡される注文ID（オプション）
-    
-    Returns:
-        PDFファイルのレスポンス
-    """
     try:
         # 現在の日時を取得
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1419,15 +1503,15 @@ from PyPDF2 import PdfMerger
 
 @app.route('/export_batch_pdf/<filename>')
 def export_batch_pdf(filename):
-    """
-    履歴ファイルから複数の決済結果をまとめてPDFでエクスポートする
+    # 
+#     履歴ファイルから複数の決済結果をまとめてPDFでエクスポートする
+#     
+#     Args:
+#         filename: 履歴ファイル名
+#         
+#     Returns:
+#         PDFファイルのレスポンス
     
-    Args:
-        filename: 履歴ファイル名
-        
-    Returns:
-        PDFファイルのレスポンス
-    """
     try:
         # セキュリティ対策としてファイル名を検証
         if '..' in filename or filename.startswith('/'):
@@ -1621,149 +1705,26 @@ def export_batch_pdf(filename):
         logger.error(f"エラーの詳細: {error_trace}")
         return jsonify({"error": str(e), "details": "詳細はサーバーログを確認してください"}), 500
 
-# ログイン・ログアウト機能
-# ログイン・ログアウト機能
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    """
-    管理者ログインページ
-    """
-    # すでにログインしている場合はリダイレクト
-    if session.get('admin_logged_in'):
-        return redirect(url_for('index'))
+# 古いログイン機能は削除 - 認証Blueprintを使用
+# @app.route('/login', methods=['GET', 'POST'])
+# def login():
+    # 古いログイン機能のコメントアウト - 認証Blueprintを使用
     
-    # リダイレクト先の取得
-    next_page = request.args.get('next')
-    
-    # WTFormsを使用したフォーム処理
-    form = LoginForm()
-    
-    # デバッグ情報を追加
-    app.logger.info(f"Session: {session}")
-    app.logger.info(f"Session ID: {request.cookies.get(app.config['SESSION_COOKIE_NAME'], 'なし')}")
-    app.logger.info(f"CSRF enabled: {app.config.get('WTF_CSRF_ENABLED', False)}")
-    app.logger.info(f"CSRF token in session: {'csrf_token' in session}")
-    app.logger.info(f"環境変数 ADMIN_USERNAME: {os.environ.get('ADMIN_USERNAME')}")
-    app.logger.info(f"環境変数 ADMIN_PASSWORD: {os.environ.get('ADMIN_PASSWORD')}")
-    
-    # POSTリクエストの処理
-    if request.method == 'POST':
-        app.logger.info(f"フォームデータ: {request.form}")
-        app.logger.info(f"ログイン前のセッション状態: {session}")
-        
-        # CSRFトークンをログに出力
-        csrf_token = session.get('csrf_token')
-        token = request.form.get('csrf_token')
-        app.logger.info(f"受信したトークン: {token}, セッショントークン: {csrf_token}")
-        
-        # WTFormsのvalidate_on_submitを使用してCSRFトークンを検証
-        if form.validate_on_submit():
-            # フォームデータを取得
-            username = form.username.data
-            password = form.password.data
-            app.logger.info(f"入力されたユーザー名: {username}, パスワード: {'*' * len(password) if password else 'なし'}")
-            
-            # 環境変数から管理者認証情報を取得
-            admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-            admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
-            app.logger.info(f"設定された管理者ユーザー名: {admin_username}")
-            
-            # 認証チェック
-            if username == admin_username and password == admin_password:
-                app.logger.info("認証成功: 管理者としてログイン")
-                
-                # 既存のセッションをクリア
-                session.clear()
-                app.logger.info("セッションをクリアしました")
-                
-                # 管理者情報をセッションに設定
-                session['admin_logged_in'] = True
-                session['admin_username'] = username
-                session['is_paid_member'] = True  # 管理者は有料会員の権限も持つ
-                session['login_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                session.permanent = True  # セッションを永続化
-                session.modified = True  # セッション変更を確実に保存
-                
-                # セッション設定後の状態をログ出力
-                app.logger.info(f"ログイン後のセッション状態: {session}")
-                app.logger.info(f"admin_logged_inの値: {session.get('admin_logged_in')}")
-                
-                flash('管理者としてログインしました', 'success')
-                
-                # リダイレクト先が指定されていればそこに、なければトップページに
-                redirect_url = next_page if next_page else url_for('index')
-                app.logger.info(f"リダイレクト先: {redirect_url}")
-                
-                # セッションを確実に保存するために再度確認
-                app.logger.info(f"リダイレクト前の最終確認 - セッション状態: {session}")
-                app.logger.info(f"リダイレクト前の最終確認 - admin_logged_in: {session.get('admin_logged_in')}")
-                
-                # セッションを確実に保存
-                session.modified = True
-                app.logger.info("セッションを確実に保存しました")
-                
-                # Cookieの設定を確認
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_NAME: {app.config.get('SESSION_COOKIE_NAME')}")
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_SECURE: {app.config.get('SESSION_COOKIE_SECURE')}")
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_HTTPONLY: {app.config.get('SESSION_COOKIE_HTTPONLY')}")
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_PATH: {app.config.get('SESSION_COOKIE_PATH')}")
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_DOMAIN: {app.config.get('SESSION_COOKIE_DOMAIN')}")
-                app.logger.info(f"Cookie設定 - SESSION_COOKIE_SAMESITE: {app.config.get('SESSION_COOKIE_SAMESITE')}")
-                
-                # レスポンスにCookieを確実に設定するための処理
-                response = make_response(redirect(redirect_url))
-                if '_flashes' in session:
-                    app.logger.info(f"Flashメッセージがセッションに存在します: {session['_flashes']}")
-                
-                return response
-            else:
-                app.logger.info("認証失敗: ユーザー名またはパスワードが不正です")
-                flash('ユーザー名またはパスワードが正しくありません', 'danger')
-        else:
-            app.logger.info(f"CSRF検証失敗またはフォーム検証エラー: {form.errors}")
-            flash('CSRFトークンが無効か、フォームにエラーがあります', 'danger')
-    
-    # セッション状態をログに出力
-    app.logger.info(f"ログインページ表示時のセッション状態: {session}")
-    app.logger.info(f"ログインページ表示時のis_admin: {session.get('admin_logged_in', False)}, is_paid_member: {session.get('is_paid_member', False)}")
-    
-    # PayPalモードを取得（デフォルトはsandbox）
-    paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
-    
-    # ユーザー権限情報
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
-    
-    # 本番モードでの制限表示フラグ
-    show_restrictions = paypal_mode.lower() != 'sandbox' and not (is_admin or is_paid_member)
-    
-    return render_template('login.html', 
-                          form=form,
-                          next=next_page,
-                          mode=paypal_mode, 
-                          paypal_mode=paypal_mode,
-                          is_admin=is_admin,
-                          is_paid_member=is_paid_member,
-                          show_restrictions=show_restrictions)
-@app.route('/logout')
-def logout():
-    """
-    ログアウト処理
-    """
-    app.logger.info(f"ログアウト前のセッション状態: {session}")
-    session.clear()  # セッション全体をクリア
-    app.logger.info(f"ログアウト後のセッション状態: {session}")
-    flash('ログアウトしました', 'info')
-    return redirect(url_for('index'))
+    # 古いPOST処理のコメントアウト
+    # 古い認証ロジックのコメントアウト - 認証Blueprintで実装されています
+    pass
+# 古いログアウト機能は削除 - 認証Blueprintを使用
+# @app.route('/logout')
+# def logout():
 
 # 設定ページ
 @app.route('/settings')
 def settings():
-    """
-    設定ページ - sandboxモードでは誰でもアクセス可能、本番モードでは有料会員または管理者のみ
-    管理者はすべての設定を閲覧・編集可能
-    ゲストユーザーはsandboxモードの設定のみ閲覧・編集可能
-    """
+    # 
+#     設定ページ - sandboxモードでは誰でもアクセス可能、本番モードでは有料会員または管理者のみ
+#     管理者はすべての設定を閲覧・編集可能
+#     ゲストユーザーはsandboxモードの設定のみ閲覧・編集可能
+    
     logger.info("設定ページにアクセスされました")
     
     # セッション情報をログ出力
@@ -1816,10 +1777,11 @@ def settings():
 
 # 履歴一覧ページ
 @app.route('/history')
+@login_required
 def history():
-    """
-    履歴一覧ページ
-    """
+    # 
+#     履歴一覧ページ
+    
     history_data = []
     try:
         results_folder = app.config['RESULTS_FOLDER']
@@ -1881,13 +1843,14 @@ def history():
     return render_template('history.html', history_data=history_data)
 
 @app.route('/history/<filename>')
+@login_required
 def history_detail(filename):
-    """
-    履歴詳細ページ
+    # 
+#     履歴詳細ページ
+#     
+#     Args:
+#         filename: 履歴ファイル名
     
-    Args:
-        filename: 履歴ファイル名
-    """
     try:
         # セキュリティ対策としてファイル名を検証
         if '..' in filename or filename.startswith('/'):
@@ -1931,11 +1894,11 @@ def history_detail(filename):
 @app.route('/history/delete', methods=['POST'])
 @paid_member_or_admin_required
 def delete_history():
-    """
-    履歴ファイルを削除する関数
-    二重確認のため、確認コードを検証する
-    PayPal APIを使用して注文情報も削除する
-    """
+    # 
+#     履歴ファイルを削除する関数
+#     二重確認のため、確認コードを検証する
+#     PayPal APIを使用して注文情報も削除する
+    
     if request.method == 'POST':
         # 単一ファイル削除の場合
         if 'filename' in request.form:
@@ -2065,9 +2028,9 @@ def delete_history():
 @app.route('/history/delete_all_with_paypal', methods=['POST'])
 @paid_member_or_admin_required
 def delete_all_history_with_paypal():
-    """
-    全ての履歴ファイルを削除し、関連するPayPal注文情報も削除する関数
-    """
+    # 
+#     全ての履歴ファイルを削除し、関連するPayPal注文情報も削除する関数
+    
     results_folder = current_app.config['RESULTS_FOLDER']
     if not os.path.exists(results_folder):
         return jsonify({
@@ -2194,13 +2157,13 @@ _api_base_cache = {
 }
 
 def get_api_base():
-    """
-    PayPal APIのベースURLを取得する
-    キャッシュ機能とエラーハンドリングを実装
+    # 
+#     PayPal APIのベースURLを取得する
+#     キャッシュ機能とエラーハンドリングを実装
+#     
+#     Returns:
+#         文字列: PayPal APIのベースURL
     
-    Returns:
-        文字列: PayPal APIのベースURL
-    """
     global _api_base_cache
     
     try:
@@ -2234,16 +2197,16 @@ def get_api_base():
         return "https://api-m.sandbox.paypal.com"  # 安全なデフォルト値
 
 def create_paypal_payment_link(amount, customer, request=None):
-    """
-    PayPal決済リンクを生成する
+    # 
+#     PayPal決済リンクを生成する
+#     
+#     Args:
+#         amount: 金額
+#         customer: 客先名
+#         
+#     Returns:
+#         PayPal決済リンクのURL
     
-    Args:
-        amount: 金額
-        customer: 客先名
-        
-    Returns:
-        PayPal決済リンクのURL
-    """
     config = get_config()
     client_id = config.get('paypal_client_id', '')
     client_secret = config.get('paypal_client_secret', '')
@@ -2495,98 +2458,11 @@ def create_paypal_payment_link(amount, customer, request=None):
         # 決済リンクを生成
         payment_link = f"{base_url}/cgi-bin/webscr?cmd=_xclick&business={urllib.parse.quote(business_id)}&item_name={urllib.parse.quote(cleaned_customer + '様宛請求書')}&amount={formatted_amount}&currency_code={currency_code}&charset=UTF-8"
         logger.info(f"フォールバック決済リンク生成: {payment_link}")
-        return payment_link
     except Exception as e:
         logger.error(f"フォールバック決済リンク生成エラー: {str(e)}")
         return ''
 
-def check_payment_status(order_id):
-    """
-    PayPal APIを使用して決済状態を確認する
-    
-    Args:
-        order_id: PayPalのオーダーID
-        
-    Returns:
-        状態文字列: 'COMPLETED', 'PENDING', 'FAILED', 'UNKNOWN'のいずれか
-    """
-    try:
-        if not order_id or len(order_id) < 5:
-            logger.warning(f"無効なオーダーID: {order_id}")
-            return "UNKNOWN"
-            
-        logger.info(f"PayPal決済状態確認開始: オーダーID={order_id}")
-            
-        # アクセストークン取得
-        access_token = get_paypal_access_token()
-        if not access_token:
-            logger.error("PayPalアクセストークン取得失敗")
-            return "UNKNOWN"
-        
-        # オーダー情報取得
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}",
-            "Cache-Control": "no-cache"
-        }
-        
-        api_base = get_api_base()
-        order_url = f"{api_base}/v2/checkout/orders/{order_id}"
-        logger.info(f"PayPal API呼び出し: {order_url}")
-        
-        # キャッシュを使用しないようにするためのパラメータを追加
-        params = {"_": int(time.time() * 1000)}
-        response = requests.get(order_url, headers=headers, params=params)
-        
-        logger.info(f"PayPal APIレスポンス: ステータスコード={response.status_code}")
-        
-        if response.status_code == 200:
-            order_data = response.json()
-            status = order_data.get("status", "")
-            logger.info(f"PayPal注文ステータス: {status}, 詳細: {json.dumps(order_data)[:200]}...")
-            
-            # 承認済みの場合はキャプチャを試みる
-            if status == "APPROVED":
-                logger.info(f"承認済み注文を検出: {order_id} - キャプチャを試みます")
-                capture_url = f"{api_base}/v2/checkout/orders/{order_id}/capture"
-                capture_response = requests.post(capture_url, headers=headers)
-                
-                if capture_response.status_code == 201:
-                    capture_data = capture_response.json()
-                    capture_status = capture_data.get("status", "")
-                    logger.info(f"キャプチャ成功: 新ステータス={capture_status}")
-                    if capture_status == "COMPLETED":
-                        return "COMPLETED"  # キャプチャ成功、支払い完了
-                else:
-                    logger.error(f"キャプチャ失敗: {capture_response.status_code}, {capture_response.text}")
-            
-            # 状態に応じて返却
-            if status == "COMPLETED":
-                logger.info("支払い完了状態を返却: COMPLETED")
-                return "COMPLETED"  # 支払い完了
-            elif status == "APPROVED":
-                logger.info("承認済み状態を返却: PENDING")
-                return "PENDING"    # 承認済み（キャプチャ前）
-            elif status == "CREATED":
-                logger.info("作成済み状態を返却: PENDING")
-                return "PENDING"    # 作成済み（支払い前）
-            elif status == "VOIDED":
-                logger.info("無効化状態を返却: FAILED")
-                return "FAILED"     # 無効化された注文
-            elif status == "PAYER_ACTION_REQUIRED":
-                logger.info("アクション必要状態を返却: PENDING")
-                return "PENDING"    # 支払い者のアクションが必要な状態
-            else:
-                logger.info(f"その他の状態を返却: {status}")
-                return status        # その他の状態はそのまま返す
-        else:
-            logger.error(f"PayPal API エラー: {response.status_code}, {response.text}")
-            return "UNKNOWN"
-    except Exception as e:
-        logger.error(f"決済状態確認エラー: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return "UNKNOWN"
+from payment_status_checker import check_payment_status
 
 # 選択された金額で決済リンクを生成するAPI
 @app.route('/api/generate_payment_link', methods=['POST'])
@@ -2630,10 +2506,10 @@ def generate_payment_link():
 # 単一PDFファイルの処理
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    """PDFファイルをアップロードするエンドポイント
+    # PDFファイルをアップロードするエンドポイント
+#     
+#     フロントエンドからアップロードされたPDFファイルを保存し、ファイル名を返す
     
-    フロントエンドからアップロードされたPDFファイルを保存し、ファイル名を返す
-    """
     logger.info("ファイルアップロードリクエストを受信")
     logger.info(f"リクエストタイプ: {request.content_type}")
     logger.info(f"リクエストファイル: {request.files}")
@@ -2793,10 +2669,10 @@ def process_single_pdf(filepath, filename, request):
 @app.route('/process', methods=['POST'])
 @api_access_required
 def process_pdf():
-    """アップロードされたPDFファイルを処理するAPIエンドポイント
+    # アップロードされたPDFファイルを処理するAPIエンドポイント
+#     
+#     PDFから顧客名と金額を抽出し、PayPal決済リンクを生成する
     
-    PDFから顧客名と金額を抽出し、PayPal決済リンクを生成する
-    """
     logger.info("PDF処理リクエストを受信")
     logger.info(f"PDF処理時のセッション状態: {session}")
     logger.info(f"PDF処理時のリクエストタイプ: {request.content_type}")
@@ -2959,12 +2835,12 @@ def process_pdf():
 # 設定の保存
 @app.route('/settings/save', methods=['POST'])
 def save_settings():
-    """設定を保存する
+    # 設定を保存する
+#     
+#     フォームから送信された設定をJSONファイルに保存する
+#     管理者はすべての設定を変更可能
+#     ゲストユーザーはsandboxモードのみ変更可能
     
-    フォームから送信された設定をJSONファイルに保存する
-    管理者はすべての設定を変更可能
-    ゲストユーザーはsandboxモードのみ変更可能
-    """
     logger.info("設定保存リクエストを受信")
     
     try:
@@ -3018,11 +2894,11 @@ def save_settings():
 # 接続テスト
 @app.route('/settings/test_connection', methods=['POST'])
 def test_connection():
-    """接続テストを行う
+    # 接続テストを行う
+#     
+#     PayPal APIへの接続テストを行い、結果を返す
+#     JSONリクエストとフォームデータの両方に対応
     
-    PayPal APIへの接続テストを行い、結果を返す
-    JSONリクエストとフォームデータの両方に対応
-    """
     logger.info("接続テストリクエストを受信")
     
     try:
@@ -3065,12 +2941,12 @@ def test_connection():
 # 設定のエクスポート
 @app.route('/settings/export', methods=['GET'])
 def export_settings():
-    """設定をJSONファイルとしてエクスポートする
+    # 設定をJSONファイルとしてエクスポートする
+#     
+#     現在の設定をJSONファイルとしてダウンロード可能にする
+#     管理者はすべての設定をエクスポート可能
+#     ゲストユーザーはsandboxモードのみエクスポート可能
     
-    現在の設定をJSONファイルとしてダウンロード可能にする
-    管理者はすべての設定をエクスポート可能
-    ゲストユーザーはsandboxモードのみエクスポート可能
-    """
     logger.info("設定エクスポートリクエストを受信")
     
     try:
@@ -3109,12 +2985,12 @@ def export_settings():
 # 設定のインポート
 @app.route('/settings/import', methods=['POST'])
 def import_settings():
-    """設定をJSONファイルからインポートする
+    # 設定をJSONファイルからインポートする
+#     
+#     アップロードされたJSONファイルから設定をインポートする
+#     管理者はすべての設定をインポート可能
+#     ゲストユーザーはsandboxモードのみインポート可能
     
-    アップロードされたJSONファイルから設定をインポートする
-    管理者はすべての設定をインポート可能
-    ゲストユーザーはsandboxモードのみインポート可能
-    """
     logger.info("設定インポートリクエストを受信")
     
     try:
@@ -3199,13 +3075,13 @@ def import_settings():
 # ファイルダウンロード
 @app.route('/download/<path:filename>')
 def download_file(filename):
-    """ファイルダウンロードのAPIエンドポイント
+    # ファイルダウンロードのAPIエンドポイント
+#     
+#     指定されたファイルをダウンロードする
+#     
+#     Args:
+#         filename: ダウンロードするファイル名
     
-    指定されたファイルをダウンロードする
-    
-    Args:
-        filename: ダウンロードするファイル名
-    """
     logger.info(f"ファイルダウンロードリクエスト: {filename}")
     
     # セキュリティ対策としてファイル名を検証
@@ -3233,6 +3109,17 @@ def download_file(filename):
         logger.error(f"ファイルダウンロードエラー: {str(e)}")
         abort(500)
 
+# LoginManager設定は認証ブループリントで行います
+
+# 認証ブループリントの登録
+try:
+    from auth import auth_bp, setup_login_manager
+    app.register_blueprint(auth_bp)
+    setup_login_manager(app)
+    logger.info("認証ブループリントを登録しました")
+except Exception as e:
+    logger.error(f"認証ブループリントの登録エラー: {str(e)}")
+
 # 新しいバッチPDFエクスポート機能をインポート
 try:
     from batch_pdf_export import register_batch_export_route
@@ -3241,6 +3128,263 @@ try:
     logger.info("バッチPDFエクスポート機能を登録しました")
 except Exception as e:
     logger.error(f"バッチPDFエクスポート機能の登録エラー: {str(e)}")
+
+# PayPal Webhook処理モジュールをインポート
+try:
+    from paypal_webhook import verify_webhook_signature, process_payment_webhook
+    logger.info("PayPal Webhook処理モジュールをインポートしました")
+except Exception as e:
+    logger.error(f"PayPal Webhook処理モジュールのインポートエラー: {str(e)}")
+
+# PayPal Webhook エンドポイント
+@app.route('/webhook/paypal', methods=['POST'])
+def paypal_webhook():
+    """
+    PayPal Webhookエンドポイント
+    
+    PayPalからのWebhookイベントを受信し、処理する
+    署名を検証し、支払いステータスを更新する
+    """
+    logger.info("PayPal Webhookリクエストを受信")
+    
+    try:
+        # リクエストヘッダーから必要な情報を取得
+        transmission_id = request.headers.get('Paypal-Transmission-Id')
+        timestamp = request.headers.get('Paypal-Transmission-Time')
+        cert_url = request.headers.get('Paypal-Cert-Url')
+        auth_algo = request.headers.get('Paypal-Auth-Algo')
+        actual_sig = request.headers.get('Paypal-Transmission-Sig')
+        
+        # Webhook IDは空のまま渡し、verify_webhook_signature内で取得する
+        webhook_id = ''
+        
+        # リクエストボディを取得
+        event_body = request.data.decode('utf-8')
+        event_data = json.loads(event_body)
+        
+        # Webhook IDは空のまま渡し、verify_webhook_signature内で取得される
+        
+        # 必要なヘッダーが存在するか確認
+        if not all([transmission_id, timestamp, cert_url, auth_algo, actual_sig]):
+            logger.error("必要なPayPal Webhookヘッダーが不足しています")
+            return jsonify({
+                'success': False,
+                'message': '必要なWebhookヘッダーが不足しています'
+            }), 400
+        
+        # Webhook署名を検証
+        is_valid = verify_webhook_signature(
+            transmission_id, timestamp, webhook_id, event_body, 
+            cert_url, actual_sig, auth_algo
+        )
+        
+        if not is_valid:
+            logger.warning("PayPal Webhook署名検証に失敗しました")
+            return jsonify({
+                'success': False,
+                'message': 'Webhook署名が無効です'
+            }), 400
+        
+        # イベントを処理
+        success, message = process_payment_webhook(event_data)
+        
+        if success:
+            logger.info(f"PayPal Webhook処理成功: {message}")
+            return jsonify({
+                'success': True,
+                'message': message
+            })
+        else:
+            logger.warning(f"PayPal Webhook処理失敗: {message}")
+            return jsonify({
+                'success': False,
+                'message': message
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"PayPal Webhook処理例外: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Webhook処理エラー: {str(e)}'
+        }), 500
+
+@app.route('/api/update_payment_status', methods=['GET', 'POST'])
+@login_required
+def update_payment_status_api():
+    """
+    特定の注文IDの支払いステータスを手動で更新するAPIエンドポイント
+    """
+    
+    try:
+        # GETメソッドの場合はクエリパラメータから取得
+        if request.method == 'GET':
+            order_id = request.args.get('order_id')
+        else:
+            # POSTメソッドの場合はJSONから取得
+            data = request.get_json()
+            order_id = data.get('order_id')
+        
+        if not order_id:
+            return jsonify({
+                'success': False,
+                'message': '注文IDが必要です'
+            }), 400
+            
+        # 支払いステータスを更新
+        success, new_status, message = update_payment_status_by_order_id(order_id)
+        
+        if success:
+            logger.info(f"支払いステータス手動更新成功: 注文ID={order_id}, 新ステータス={new_status}")
+            return jsonify({
+                'success': True,
+                'status': new_status,
+                'message': message
+            })
+        else:
+            logger.warning(f"支払いステータス手動更新失敗: 注文ID={order_id}, メッセージ={message}")
+            return jsonify({
+                'success': False,
+                'message': message
+            }), 400
+    
+    except Exception as e:
+        logger.error(f"支払いステータス更新API例外: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'エラー: {str(e)}'
+        }), 500
+
+@app.route('/api/update_all_payment_statuses', methods=['GET'])
+def update_all_payment_statuses_api():
+    # 管理者権限チェック
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return jsonify({
+            'success': False,
+            'message': '管理者権限が必要です。ログインしてください。',
+            'auth_required': True
+        }), 401
+    """
+    未完了の支払いステータスをすべて更新するAPIエンドポイント(管理者専用)
+    """
+    
+    try:
+        # 支払いステータスを一括更新
+        updated_count, error_count = update_pending_payment_statuses()
+        
+        logger.info(f"支払いステータス一括更新完了: 更新={updated_count}件, エラー={error_count}件")
+        return jsonify({
+            'success': True,
+            'updated_count': updated_count,
+            'error_count': error_count,
+            'message': f'{updated_count}件の支払いステータスを更新しました。エラー: {error_count}件'
+        })
+    
+    except Exception as e:
+        logger.error(f"支払いステータス一括更新API例外: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'エラー: {str(e)}'
+        }), 500
+
+@app.route('/api/update_history_payment_statuses/<filename>', methods=['GET'])
+def update_history_payment_statuses(filename):
+    # 管理者権限チェック
+    if not current_user.is_authenticated or not current_user.is_admin:
+        return jsonify({
+            'success': False,
+            'message': '管理者権限が必要です。ログインしてください。',
+            'auth_required': True
+        }), 401
+    """
+    特定の履歴ファイルの支払いステータスを更新するAPIエンドポイント(管理者専用)
+    """
+    
+    try:
+        # ファイル名のバリデーション
+        if not re.match(r'^payment_links_\d{8}_\d{6}\.json$', filename):
+            return jsonify({
+                'success': False,
+                'message': '無効なファイル名形式です'
+            }), 400
+        
+        # 履歴ファイルのパスを取得
+        history_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], 'history')
+        history_path = os.path.join(history_dir, filename)
+        
+        if not os.path.exists(history_path):
+            return jsonify({
+                'success': False,
+                'message': '履歴ファイルが存在しません'
+            }), 404
+        
+        # 履歴ファイルを読み込み
+        with open(history_path, 'r', encoding='utf-8') as f:
+            history_data = json.load(f)
+        
+        # 注文IDを収集
+        order_ids = []
+        for entry in history_data:
+            if 'order_id' in entry and entry['order_id']:
+                order_ids.append(entry['order_id'])
+        
+        if not order_ids:
+            return jsonify({
+                'success': True,
+                'updated_count': 0,
+                'error_count': 0,
+                'message': '更新する注文IDがありません'
+            })
+        
+        # 各注文IDの支払いステータスを更新
+        updated_count = 0
+        error_count = 0
+        
+        for order_id in order_ids:
+            try:
+                success, new_status, message = update_payment_status_by_order_id(order_id)
+                if success:
+                    updated_count += 1
+                else:
+                    error_count += 1
+                    logger.warning(f"注文ID {order_id} の更新に失敗: {message}")
+            except Exception as e:
+                error_count += 1
+                logger.error(f"注文ID {order_id} の更新中に例外発生: {str(e)}")
+        
+        logger.info(f"履歴ファイル {filename} の支払いステータス更新完了: 更新={updated_count}件, エラー={error_count}件")
+        return jsonify({
+            'success': True,
+            'updated_count': updated_count,
+            'error_count': error_count,
+            'message': f'{updated_count}件の支払いステータスを更新しました。エラー: {error_count}件'
+        })
+    
+    except Exception as e:
+        logger.error(f"履歴ファイル支払いステータス更新API例外: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'エラー: {str(e)}'
+        }), 500
+
+
+
+try:
+    from update_history_api import register_update_history_api
+    from auth_api import api_admin_required
+    register_update_history_api(app, api_admin_required, update_payment_status_by_order_id, logger)
+    logger.info("個別の履歴ファイルの支払いステータス更新APIエンドポイントを登録しました")
+except ImportError as e:
+    logger.warning(f"update_history_apiモジュールのインポートに失敗しました: {e}")
+
+# PayPalルートの登録
+try:
+    from paypal_routes import paypal_bp
+    app.register_blueprint(paypal_bp)
+    logger.info("PayPalルートが正常に登録されました")
+except ImportError as e:
+    logger.warning(f"paypal_routesモジュールのインポートに失敗しました: {e}")
+except Exception as e:
+    logger.error(f"個別の履歴ファイルの支払いステータス更新APIエンドポイント登録エラー: {str(e)}")
 
 # アプリ実行
 if __name__ == '__main__':
@@ -3260,7 +3404,6 @@ if __name__ == '__main__':
     logger.info("=== ルート情報 ===")
     for rule in app.url_map.iter_rules():
         logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
-    
     # 設定の初期化はグローバル関数を呼び出す
     initialize_config()
 

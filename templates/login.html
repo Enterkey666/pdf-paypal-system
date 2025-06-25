@@ -14,7 +14,7 @@
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header bg-primary text-white">
-                        <h4 class="mb-0">管理者ログイン</h4>
+                        <h4 class="mb-0">ログイン</h4>
                     </div>
                     <div class="card-body">
                         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -27,25 +27,35 @@
                             {% endif %}
                         {% endwith %}
                         
-                        <form method="POST" action="{{ url_for('login') }}">
+                        <form method="POST" action="{{ url_for('auth.login') }}">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
                             
                             <div class="form-group mb-3">
-                                {{ form.username.label }}
-                                {{ form.username(class="form-control", id="username") }}
+                                <label for="username">ユーザー名</label>
+                                <input type="text" class="form-control" id="username" name="username" required>
                             </div>
                             
-                            <div class="form-group mb-4">
-                                {{ form.password.label }}
-                                {{ form.password(class="form-control", id="password") }}
+                            <div class="form-group mb-3">
+                                <label for="password">パスワード</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            
+                            <div class="form-check mb-3">
+                                <input type="checkbox" class="form-check-input" id="remember" name="remember">
+                                <label class="form-check-label" for="remember">ログイン状態を保持する</label>
                             </div>
                             
                             <div class="d-grid mb-3">
-                                {{ form.submit(class="btn btn-primary") }}
+                                <button type="submit" class="btn btn-primary" id="loginButton">ログイン</button>
                             </div>
+                            
+                            <div class="text-center mb-3">
+                                <a href="{{ url_for('auth.register') }}">アカウントをお持ちではありませんか？新規登録</a>
+                            </div>
+                            
                             <div class="d-grid">
-                                <a href="{{ url_for('index') }}" class="btn btn-secondary">戻る</a>
+                                <a href="{{ url_for('index') }}" class="btn btn-secondary">トップページに戻る</a>
                             </div>
                         </form>
                     </div>
@@ -54,6 +64,45 @@
         </div>
     </div>
     
-    <script src="{{ url_for('static', filename='js/bootstrap.bundle.min.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginForm = document.querySelector('form');
+            const loginButton = document.getElementById('loginButton');
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
+            
+            // フォームの入力フィールドの変更を監視
+            function checkFormValidity() {
+                if (usernameInput.value.trim() !== '' && passwordInput.value.trim() !== '') {
+                    loginButton.disabled = false;
+                } else {
+                    loginButton.disabled = true;
+                }
+            }
+            
+            // 初期状態でボタンを有効にする
+            loginButton.disabled = false;
+            
+            // 入力フィールドの変更を監視
+            usernameInput.addEventListener('input', checkFormValidity);
+            passwordInput.addEventListener('input', checkFormValidity);
+            
+            // フォーム送信時の処理
+            loginForm.addEventListener('submit', function(e) {
+                // ボタンを無効化してスピナーを表示
+                loginButton.disabled = true;
+                const originalText = loginButton.innerHTML;
+                loginButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ログイン中...';
+                
+                // フォームが自動的に送信されるので、ここでは特に何もしない
+                // ただし、送信が失敗した場合のためにタイムアウトを設定
+                setTimeout(function() {
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = originalText;
+                }, 10000); // 10秒後にボタンを元に戻す（サーバーからの応答がない場合）
+            });
+        });
+    </script>
 </body>
 </html>
