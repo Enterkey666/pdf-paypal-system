@@ -1,0 +1,33 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# ランタイム依存関係のインストール
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    tesseract-ocr-jpn \
+    tesseract-ocr-eng \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# アプリケーションの依存関係をインストール
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# アプリケーションコードのコピー
+COPY . .
+
+# 必要なディレクトリの作成
+RUN mkdir -p /app/uploads /app/results /app/logs /app/flask_session
+
+# 環境変数の設定
+ENV PORT=8080
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# ポートの公開
+EXPOSE 8080
+
+# アプリケーションの実行
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:app"]

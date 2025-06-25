@@ -38,6 +38,25 @@ def get_alternatives(key: str) -> List[Dict]:
             return cache_entry['alternatives']
     return []
 
+def sanitize_for_log(text: str) -> str:
+    """
+    ログ出力用に文字列をサニタイズする
+    
+    Args:
+        text: サニタイズするテキスト
+        
+    Returns:
+        サニタイズされたテキスト
+    """
+    if not text:
+        return ""
+    try:
+        # 問題のある文字を安全な文字に置換
+        return text.encode('cp932', errors='replace').decode('cp932')
+    except:
+        # エンコードに失敗した場合はASCII文字のみ残す
+        return ''.join(c if ord(c) < 128 else '?' for c in text)
+
 def mask_personal_info(name: str) -> str:
     """
     個人情報を保護するためのマスキング処理
@@ -194,7 +213,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
             name = match.group(1).strip()
             if is_valid_customer_name(name, invalid_customer_terms):
                 context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
-                logger.info(f"顧客フィールドから抽出: '{name}' (コンテキスト: '{context}')")
+                logger.info(f"顧客フィールドから抽出: '{sanitize_for_log(name)}' (コンテキスト: '{sanitize_for_log(context)}')")
                 candidates.append({'name': name, 'score': 5, 'source': 'テキスト'})  # 優先度5（最高）
     
     # 「様」が付く名前を抽出
@@ -207,7 +226,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
             name = re.sub(r'[\(\uff08].*', '', name).strip()
         if is_valid_customer_name(name, invalid_customer_terms):
             context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
-            logger.info(f"「様」付きから抽出: '{name}' (コンテキスト: '{context}')")
+            logger.info(f"「様」付きから抽出: '{sanitize_for_log(name)}' (コンテキスト: '{sanitize_for_log(context)}')")
             candidates.append({'name': name, 'score': 4, 'source': 'テキスト'})  # 優先度4（高）
     
     # 「御中」が付く名前を抽出
@@ -216,7 +235,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
         name = match.group(1).strip()
         if is_valid_customer_name(name, invalid_customer_terms):
             context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
-            logger.info(f"「御中」付きから抽出: '{name}' (コンテキスト: '{context}')")
+            logger.info(f"「御中」付きから抽出: '{sanitize_for_log(name)}' (コンテキスト: '{sanitize_for_log(context)}')")
             candidates.append({'name': name, 'score': 3, 'source': 'テキスト'})  # 優先度3（中高）
     
     # 「〜様」パターンを抽出（最優先）
@@ -246,7 +265,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
     
     for match in sama_matches:
         raw_name = match.group(1).strip()
-        logger.info(f"「様」パターン生の抽出結果: '{raw_name}'")
+        logger.info(f"「様」パターン生の抽出結果: '{sanitize_for_log(raw_name)}'")
         
         # 括弧を除去する処理
         name = re.sub(r'\s*\([^)]*\)\s*', ' ', raw_name).strip()
@@ -255,11 +274,11 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
         # 連続する空白を1つにまとめる
         name = re.sub(r'[\u3000\s]+', ' ', name).strip()
         
-        logger.info(f"「様」パターン前処理後: '{name}'")
+        logger.info(f"「様」パターン前処理後: '{sanitize_for_log(name)}'")
         
         if is_valid_customer_name(name, invalid_customer_terms):
             context = filtered_text[max(0, match.start() - 20):min(len(filtered_text), match.end() + 20)]
-            logger.info(f"「様」付きから抽出: '{name}' (コンテキスト: '{context}')")
+            logger.info(f"「様」付きから抽出: '{sanitize_for_log(name)}' (コンテキスト: '{sanitize_for_log(context)}')")
             candidates.append({'name': name, 'score': 20, 'source': 'テキスト'})  # 優先度20（最高）
     
     # 文書の最初の20行から日本語名を抽出
@@ -291,7 +310,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
     if sama_matches:
         for match in sama_matches:
             raw_name = match.group(1).strip()
-            logger.info(f"「様」パターン生の抽出結果: '{raw_name}'")
+            logger.info(f"「様」パターン生の抽出結果: '{sanitize_for_log(raw_name)}'")
             
             # 括弧を除去する処理
             name = re.sub(r'\s*\([^)]*\)\s*', ' ', raw_name).strip()
@@ -315,7 +334,7 @@ def extract_customer(text: str, filename: str = None, force_refresh: bool = Fals
     if onchu_matches:
         for match in onchu_matches:
             raw_name = match.group(1).strip()
-            logger.info(f"「御中」パターン生の抽出結果: '{raw_name}'")
+            logger.info(f"「御中」パターン生の抽出結果: '{sanitize_for_log(raw_name)}'")
             
             # 括弧を除去する処理
             name = re.sub(r'\s*\([^)]*\)\s*', ' ', raw_name).strip()
