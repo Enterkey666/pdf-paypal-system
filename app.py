@@ -3112,13 +3112,20 @@ def download_file(filename):
 # LoginManager設定は認証ブループリントで行います
 
 # 認証ブループリントの登録
-try:
-    from auth import auth_bp, setup_login_manager
-    app.register_blueprint(auth_bp)
-    setup_login_manager(app)
-    logger.info("認証ブループリントを登録しました")
-except Exception as e:
-    logger.error(f"認証ブループリントの登録エラー: {str(e)}")
+def register_auth_blueprint(app):
+    try:
+        from auth import auth_bp, setup_login_manager
+        app.register_blueprint(auth_bp)
+        setup_login_manager(app)
+        logger.info("認証ブループリントを登録しました")
+    except Exception as e:
+        logger.error(f"認証ブループリントの登録エラー: {str(e)}")
+        # エラーログをより詳細に記録
+        import traceback
+        logger.error(traceback.format_exc())
+
+# アプリケーションの初期化時に認証ブループリントを登録
+register_auth_blueprint(app)
 
 # 新しいバッチPDFエクスポート機能をインポート
 try:
@@ -3386,27 +3393,37 @@ except ImportError as e:
 except Exception as e:
     logger.error(f"個別の履歴ファイルの支払いステータス更新APIエンドポイント登録エラー: {str(e)}")
 
-# アプリ実行
-if __name__ == '__main__':
+# アプリケーション初期化関数
+def create_app():
     # ロガーの初期化
     setup_logger()
     
     # キャッシュをクリア
     clear_cache()
     
-    # アプリケーションの起動
     # 環境変数の表示（デバッグ用）
     logger.info("=== 環境変数 ===")
     for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR']:
         logger.info(f"{key}: {os.environ.get(key, 'Not set')}")
-        
-    # バッチPDFエクスポートのルートを表示
-    logger.info("=== ルート情報 ===")
-    for rule in app.url_map.iter_rules():
-        logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
-    # 設定の初期化はグローバル関数を呼び出す
+    
+    # 設定の初期化
     initialize_config()
+    
+    # ルート情報の表示（デバッグ用）
+    logger.info("=== ルート情報 ===")
+    try:
+        for rule in app.url_map.iter_rules():
+            logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
+    except Exception as e:
+        logger.error(f"ルート情報表示エラー: {str(e)}")
+    
+    return app
 
+# Gunicorn用のアプリケーションオブジェクト
+application = create_app()
+
+# アプリ実行（開発環境用）
+if __name__ == '__main__':
     import argparse
     
     # コマンドライン引数を処理
@@ -3420,20 +3437,17 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    # アプリ初期化と起動
+    # アプリ起動パラメータ
     port = args.port
     host = args.host
     debug_mode = args.debug or os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     
     logger.info(f"アプリ起動: host={host}, port={port}, debug={debug_mode}")
     
-    # create_app関数を使用してアプリケーションを初期化
-    application = create_app()
-    
     # 登録されているルートを表示（デバッグ用）
     logger.info("=== 登録されているルート ===")
     for rule in application.url_map.iter_rules():
         logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
     
-    # 初期化されたアプリケーションを実行
+    # アプリケーションを実行
     application.run(debug=debug_mode, host=host, port=port)
