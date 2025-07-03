@@ -27,4 +27,4 @@ ENV PORT=8080
 EXPOSE 8080
 
 # アプリケーションの実行
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "2", "--log-level", "debug", "--capture-output", "--enable-stdio-inheritance", "app:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "2", "--log-level", "debug", "--capture-output", "--enable-stdio-inheritance", "debug_app:application"]
