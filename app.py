@@ -3118,14 +3118,18 @@ def register_auth_blueprint(app):
         app.register_blueprint(auth_bp)
         setup_login_manager(app)
         logger.info("認証ブループリントを登録しました")
+        return True
+    except ImportError as e:
+        logger.error(f"認証ブループリントのインポートエラー: {str(e)}")
+        logger.error(f"トレースバック: {traceback.format_exc()}")
+        return False
     except Exception as e:
         logger.error(f"認証ブループリントの登録エラー: {str(e)}")
-        # エラーログをより詳細に記録
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"トレースバック: {traceback.format_exc()}")
+        return False
 
 # アプリケーションの初期化時に認証ブループリントを登録
-register_auth_blueprint(app)
+auth_registered = register_auth_blueprint(app)
 
 # 新しいバッチPDFエクスポート機能をインポート
 try:
@@ -3395,29 +3399,65 @@ except Exception as e:
 
 # アプリケーション初期化関数
 def create_app():
-    # ロガーの初期化
-    setup_logger()
+    global app
     
-    # キャッシュをクリア
-    clear_cache()
-    
-    # 環境変数の表示（デバッグ用）
-    logger.info("=== 環境変数 ===")
-    for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR']:
-        logger.info(f"{key}: {os.environ.get(key, 'Not set')}")
-    
-    # 設定の初期化
-    initialize_config()
-    
-    # ルート情報の表示（デバッグ用）
-    logger.info("=== ルート情報 ===")
     try:
-        for rule in app.url_map.iter_rules():
-            logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
+        # ロガーの初期化
+        setup_logger()
+        logger.info("アプリケーション初期化を開始します")
+        
+        # キャッシュをクリア
+        clear_cache()
+        
+        # 環境変数の表示（デバッグ用）
+        logger.info("=== 環境変数 ===")
+        for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'USE_TEMP_DIR', 'SECRET_KEY', 'PAYPAL_CLIENT_ID']:
+            value = os.environ.get(key, 'Not set')
+            # SECRET_KEYとPAYPAL_CLIENT_IDはセキュリティ上の理由から値を表示しない
+            if key in ['SECRET_KEY', 'PAYPAL_CLIENT_ID'] and value != 'Not set':
+                logger.info(f"{key}: [設定済み]")
+            else:
+                logger.info(f"{key}: {value}")
+        
+        # 設定の初期化
+        try:
+            initialize_config()
+            logger.info("設定の初期化が完了しました")
+        except Exception as e:
+            logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        # 認証ブループリントの登録を確認
+        if not auth_registered:
+            logger.warning("認証ブループリントが登録されていません。再登録を試みます。")
+            register_auth_blueprint(app)
+        
+        # PayPalルートの登録を確認
+        try:
+            if 'paypal_bp' not in [bp.name for bp in app.blueprints.values()]:
+                logger.warning("PayPalブループリントが登録されていません。再登録を試みます。")
+                from paypal_routes import paypal_bp
+                app.register_blueprint(paypal_bp)
+                logger.info("PayPalルートが正常に登録されました")
+        except Exception as e:
+            logger.error(f"PayPalブループリントの登録中にエラーが発生しました: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        # ルート情報の表示（デバッグ用）
+        logger.info("=== ルート情報 ===")
+        try:
+            for rule in app.url_map.iter_rules():
+                logger.info(f"Route: {rule.endpoint} - {rule.rule} - {rule.methods}")
+        except Exception as e:
+            logger.error(f"ルート情報表示エラー: {str(e)}")
+        
+        logger.info("アプリケーション初期化が完了しました")
+        return app
     except Exception as e:
-        logger.error(f"ルート情報表示エラー: {str(e)}")
-    
-    return app
+        logger.critical(f"アプリケーション初期化中に重大なエラーが発生しました: {str(e)}")
+        logger.critical(traceback.format_exc())
+        # 最低限の機能を持つアプリケーションを返す
+        return app
 
 # Gunicorn用のアプリケーションオブジェクト
 application = create_app()
