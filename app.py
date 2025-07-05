@@ -12,6 +12,7 @@ import sys
 
 # カレントディレクトリをPYTHONPATHに追加（デプロイ環境用）
 current_dir = os.path.dirname(os.path.abspath(__file__))
+
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
     # print(f"Added {current_dir} to sys.path")
@@ -62,9 +63,30 @@ except Exception as e:
     FIRESTORE_AVAILABLE = False
     print(f"Warning: Firestore initialization failed. API key cache will be disabled. Error: {e}")
 
-# PayPal支払いステータス関連のインポート
-from payment_status_checker import check_payment_status
-from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
+# PayPal支払いステータス関連のインポート（安全なインポート）
+try:
+    from payment_status_checker import check_payment_status
+    print("✓ payment_status_checker インポート成功")
+except ImportError as e:
+    print(f"⚠ payment_status_checker インポート失敗: {e}")
+    # フォールバック関数を定義
+    def check_payment_status(token):
+        print(f"フォールバック: payment status check for token {token}")
+        return "PENDING"
+
+try:
+    from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
+    print("✓ payment_status_updater インポート成功")
+except ImportError as e:
+    print(f"⚠ payment_status_updater インポート失敗: {e}")
+    # フォールバック関数を定義
+    def update_payment_status_by_order_id(order_id):
+        print(f"フォールバック: update payment status for order {order_id}")
+        return False, "UNKNOWN", "Payment status updater not available"
+    
+    def update_pending_payment_statuses():
+        print("フォールバック: update pending payment statuses")
+        return 0, 0
 
 # ロガーの初期化
 logger = logging.getLogger(__name__)
@@ -219,8 +241,19 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
-# データベースモジュールからユーザー関連の関数をインポート
-from database import get_user_by_id, get_user_by_email, update_last_login
+# データベースモジュールからユーザー関連の関数をインポート（安全なインポート）
+try:
+    from database import get_user_by_id, get_user_by_email, update_last_login
+    print("✓ database モジュール インポート成功")
+except ImportError as e:
+    print(f"⚠ database モジュール インポート失敗: {e}")
+    # フォールバック関数を定義
+    def get_user_by_id(user_id):
+        return None
+    def get_user_by_email(email):
+        return None
+    def update_last_login(user_id):
+        return False
 
 # 古いログインフォームクラス（削除予定）
 class LoginForm(FlaskForm):
@@ -339,9 +372,19 @@ try:
 except Exception as e:
     app.logger.warning(f"API キー暗号化機能の初期化に失敗: {e}")
     app.logger.warning("API キーキャッシュ機能は無効になります")
-# paypal_utils.pyからの関数インポート
-# ローカルモジュールのインポート
-from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
+# paypal_utils.pyからの関数インポート（安全なインポート）
+try:
+    from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
+    print("✓ paypal_utils モジュール インポート成功")
+except ImportError as e:
+    print(f"⚠ paypal_utils モジュール インポート失敗: {e}")
+    # フォールバック関数を定義
+    def cancel_paypal_order(order_id):
+        return {"status": "error", "message": "PayPal utils not available"}
+    def check_order_status(order_id):
+        return "UNKNOWN"
+    def get_paypal_access_token():
+        return None
 
 # 支払いステータス更新機能のインポート
 try:

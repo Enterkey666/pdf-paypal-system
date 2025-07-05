@@ -20,6 +20,9 @@ COPY . .
 # アップロードとダウンロードフォルダの作成
 RUN mkdir -p uploads results
 
+# PYTHONPATHを設定してアプリディレクトリを検索パスに追加
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
 # 環境変数の設定
 ENV PORT=8080
 
