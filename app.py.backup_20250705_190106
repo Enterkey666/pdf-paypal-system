@@ -12,7 +12,6 @@ import sys
 
 # カレントディレクトリをPYTHONPATHに追加（デプロイ環境用）
 current_dir = os.path.dirname(os.path.abspath(__file__))
-
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
     # print(f"Added {current_dir} to sys.path")
@@ -48,57 +47,9 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
-# APIキーキャッシュ機能用のインポート
-from datetime import timedelta
-from typing import Optional
-from cryptography.fernet import Fernet
-
-# テンプレートマッチングモジュールのインポート（安全なインポート）
-try:
-    import template_matching
-    TEMPLATE_MATCHING_AVAILABLE = True
-    print("✓ template_matching インポート成功")
-except ImportError as e:
-    TEMPLATE_MATCHING_AVAILABLE = False
-    print(f"⚠ template_matching インポート失敗: {e}")
-except Exception as e:
-    TEMPLATE_MATCHING_AVAILABLE = False
-    print(f"⚠ template_matching 初期化エラー: {e}")
-try:
-    from google.cloud import firestore
-    from google.cloud.firestore import SERVER_TIMESTAMP
-    FIRESTORE_AVAILABLE = True
-except ImportError as e:
-    FIRESTORE_AVAILABLE = False
-    print(f"Warning: google-cloud-firestore not available. API key cache will be disabled. Error: {e}")
-except Exception as e:
-    FIRESTORE_AVAILABLE = False
-    print(f"Warning: Firestore initialization failed. API key cache will be disabled. Error: {e}")
-
-# PayPal支払いステータス関連のインポート（安全なインポート）
-try:
-    from payment_status_checker import check_payment_status
-    print("✓ payment_status_checker インポート成功")
-except ImportError as e:
-    print(f"⚠ payment_status_checker インポート失敗: {e}")
-    # フォールバック関数を定義
-    def check_payment_status(token):
-        print(f"フォールバック: payment status check for token {token}")
-        return "PENDING"
-
-try:
-    from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
-    print("✓ payment_status_updater インポート成功")
-except ImportError as e:
-    print(f"⚠ payment_status_updater インポート失敗: {e}")
-    # フォールバック関数を定義
-    def update_payment_status_by_order_id(order_id):
-        print(f"フォールバック: update payment status for order {order_id}")
-        return False, "UNKNOWN", "Payment status updater not available"
-    
-    def update_pending_payment_statuses():
-        print("フォールバック: update pending payment statuses")
-        return 0, 0
+# PayPal支払いステータス関連のインポート
+from payment_status_checker import check_payment_status
+from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
 
 # ロガーの初期化
 logger = logging.getLogger(__name__)
@@ -215,18 +166,6 @@ except ImportError as e:
         logger.error("ダミーのcustomer_extractorモジュールを使用します")
         customer_extractor = _dummy_extractor
 
-# テンプレートマッチングのフォールバック関数
-def process_pdf_with_template_matching_fallback(pdf_path, templates_dir):
-    """テンプレートマッチングモジュールが利用できない場合のフォールバック関数"""
-    logger.warning(f"テンプレートマッチングモジュールが利用できないため、フォールバック処理を使用します: {pdf_path}")
-    return {}
-
-# テンプレートマッチング関数を適切に設定
-if TEMPLATE_MATCHING_AVAILABLE:
-    process_pdf_with_template = template_matching.process_pdf_with_template_matching
-else:
-    process_pdf_with_template = process_pdf_with_template_matching_fallback
-
 # モジュールの再読み込みを強制する関数
 def reload_modules():
     global customer_extractor
@@ -255,86 +194,18 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, request, render_template, jsonify, send_from_directory, redirect, url_for, current_app, flash, session, make_response
-# Flask-WTF の安全なインポート
-try:
-    from flask_wtf import FlaskForm, CSRFProtect
-    FLASK_WTF_AVAILABLE = True
-    print("✓ flask_wtf インポート成功")
-except ImportError as e:
-    print(f"⚠ flask_wtf インポート失敗: {e}")
-    FLASK_WTF_AVAILABLE = False
-    # フォールバック用のダミークラスを定義
-    class DummyForm:
-        def __init__(self, *args, **kwargs): pass
-        def validate_on_submit(self): return False
-    class DummyCSRF:
-        def init_app(self, app): pass
-    FlaskForm = DummyForm
-    CSRFProtect = DummyCSRF
-
-# Flask-Session の安全なインポート
-try:
-    from flask_session import Session
-    FLASK_SESSION_AVAILABLE = True
-    print("✓ flask_session インポート成功")
-except ImportError as e:
-    print(f"⚠ flask_session インポート失敗: {e}")
-    FLASK_SESSION_AVAILABLE = False
-    # フォールバック用のダミークラスを定義
-    class DummySession:
-        def __init__(self, app=None): pass
-        def init_app(self, app): pass
-    Session = DummySession
-# Flask-Login の安全なインポート
-try:
-    from flask_login import LoginManager, current_user, login_required
-    FLASK_LOGIN_AVAILABLE = True
-    print("✓ flask_login インポート成功")
-except ImportError as e:
-    print(f"⚠ flask_login インポート失敗: {e}")
-    FLASK_LOGIN_AVAILABLE = False
-    # フォールバック用のダミー関数を定義
-    class DummyLoginManager:
-        def init_app(self, app): pass
-        def user_loader(self, func): return func
-    LoginManager = DummyLoginManager
-    current_user = None
-    def login_required(f):
-        return f  # 認証なしで通す
-# WTForms の安全なインポート
-try:
-    from wtforms import StringField, PasswordField, SubmitField
-    from wtforms.validators import DataRequired
-    WTFORMS_AVAILABLE = True
-    print("✓ wtforms インポート成功")
-except ImportError as e:
-    print(f"⚠ wtforms インポート失敗: {e}")
-    WTFORMS_AVAILABLE = False
-    # フォールバック用のダミークラスを定義
-    class DummyField:
-        def __init__(self, *args, **kwargs): pass
-    class DummyValidator:
-        def __init__(self, *args, **kwargs): pass
-    StringField = PasswordField = SubmitField = DummyField
-    DataRequired = DummyValidator
+from flask_wtf import FlaskForm, CSRFProtect
+from flask_session import Session
+from flask_login import LoginManager, current_user, login_required
+from wtforms import StringField, PasswordField, SubmitField
+from wtforms.validators import DataRequired
 from functools import wraps
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
-# データベースモジュールからユーザー関連の関数をインポート（安全なインポート）
-try:
-    from database import get_user_by_id, get_user_by_email, update_last_login
-    print("✓ database モジュール インポート成功")
-except ImportError as e:
-    print(f"⚠ database モジュール インポート失敗: {e}")
-    # フォールバック関数を定義
-    def get_user_by_id(user_id):
-        return None
-    def get_user_by_email(email):
-        return None
-    def update_last_login(user_id):
-        return False
+# データベースモジュールからユーザー関連の関数をインポート
+from database import get_user_by_id, get_user_by_email, update_last_login
 
 # 古いログインフォームクラス（削除予定）
 class LoginForm(FlaskForm):
@@ -365,17 +236,8 @@ app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でのテストを可能に
 app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']  # CSRFチェック対象のHTTPメソッド
 
-# CSRF保護の初期化（安全な初期化）
-if FLASK_WTF_AVAILABLE:
-    try:
-        csrf = CSRFProtect(app)
-        app.logger.info("CSRF保護を初期化しました")
-    except Exception as e:
-        app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
-        csrf = None
-else:
-    app.logger.warning("Flask-WTF が利用できないため、CSRF保護は無効です")
-    csrf = None
+# CSRF保護の初期化
+csrf = CSRFProtect(app)
 
 # セッションの設定
 app.config['SESSION_TYPE'] = 'filesystem'  # ファイルシステムベースのセッション
@@ -423,74 +285,20 @@ app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # 1時間
 app.logger.info("CSRF設定を構成しました")
 
-# Flask-Sessionの初期化（安全な初期化）
-if FLASK_SESSION_AVAILABLE:
-    try:
-        session_interface = Session(app)
-        app.logger.info("セッション管理の初期化完了")
-    except Exception as e:
-        app.logger.warning(f"セッション管理の初期化に失敗: {e}")
-        session_interface = None
-else:
-    app.logger.warning("Flask-Session が利用できないため、デフォルトのセッション管理を使用")
-    session_interface = None
+# Flask-Sessionの初期化（CSRFの前に初期化）
+session_interface = Session(app)
+app.logger.info("セッション管理の初期化完了")
 app.logger.info(f"セッションインターフェース: {type(session_interface).__name__}")
 app.logger.info(f"セッション設定: {app.config.get('SESSION_TYPE')}")
 
-# CSRF保護の初期化（セッションの後に初期化、安全な初期化）
-if FLASK_WTF_AVAILABLE:
-    try:
-        csrf = CSRFProtect(app)
-        app.logger.info("CSRF保護を初期化しました")
-        app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
-        app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
-    except Exception as e:
-        app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
-        csrf = None
-else:
-    app.logger.warning("Flask-WTF が利用できないため、CSRF保護は無効です")
-    csrf = None
-
-# APIキーキャッシュ機能の初期化
-# Collection name for API key cache
-COLLECTION_NAME = "api_key_cache"
-DEFAULT_TTL_MINUTES = 60
-
-# Initialize Firestore client if available
-db = None
-if FIRESTORE_AVAILABLE:
-    try:
-        # Firestoreクライアントの初期化を遅延させる
-        app.logger.info("Firestore は利用可能です")
-    except Exception as e:
-        app.logger.error(f"Firestore の確認に失敗: {e}")
-        FIRESTORE_AVAILABLE = False
-
-# Encryption key for API keys
-ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
-if isinstance(ENCRYPTION_KEY, str):
-    ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
-
-cipher_suite = None
-try:
-    cipher_suite = Fernet(ENCRYPTION_KEY)
-    app.logger.info("API キー暗号化機能を初期化しました")
-except Exception as e:
-    app.logger.warning(f"API キー暗号化機能の初期化に失敗: {e}")
-    app.logger.warning("API キーキャッシュ機能は無効になります")
-# paypal_utils.pyからの関数インポート（安全なインポート）
-try:
-    from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
-    print("✓ paypal_utils モジュール インポート成功")
-except ImportError as e:
-    print(f"⚠ paypal_utils モジュール インポート失敗: {e}")
-    # フォールバック関数を定義
-    def cancel_paypal_order(order_id):
-        return {"status": "error", "message": "PayPal utils not available"}
-    def check_order_status(order_id):
-        return "UNKNOWN"
-    def get_paypal_access_token():
-        return None
+# CSRF保護の初期化（セッションの後に初期化）
+csrf = CSRFProtect(app)
+app.logger.info("CSRF保護を初期化しました")
+app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
+app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
+# paypal_utils.pyからの関数インポート
+# ローカルモジュールのインポート
+from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
 
 # 支払いステータス更新機能のインポート
 try:
@@ -1287,7 +1095,124 @@ def initialize_config():
     except Exception as e:
         logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
 
-# 重複するcreate_app関数を削除しました
+def create_app():
+    # アプリ起動時にキャッシュをクリア
+    clear_cache()
+    
+    # シークレットキーの確認（既に設定されているので再設定しない）
+    if not app.secret_key or app.secret_key == 'your_secret_key_here':
+        app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+        app.logger.info(f"シークレットキーを更新しました")
+    
+    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大アップロードサイズを50MBに制限
+
+    # アップロードとダウンロードの設定
+    # Renderのような環境では一時ディレクトリを使用
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # 環境変数からフォルダ設定を取得、存在しない場合はデフォルト値を使用
+    upload_folder = os.environ.get('UPLOAD_FOLDER')
+    if upload_folder is None or not upload_folder.strip():
+        upload_folder = os.path.join(base_dir, 'uploads')
+        logger.info(f"UPLOAD_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {upload_folder}")
+    
+    results_folder = os.environ.get('RESULTS_FOLDER')
+    if results_folder is None or not results_folder.strip():
+        results_folder = os.path.join(base_dir, 'results')
+        logger.info(f"RESULTS_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {results_folder}")
+    
+    allowed_extensions = {'pdf'}
+    
+    # クラウド環境では一時ディレクトリを使用する場合がある
+    if os.environ.get('USE_TEMP_DIR', 'false').lower() == 'true':
+        upload_folder = tempfile.gettempdir()
+        results_folder = tempfile.gettempdir()
+        logger.info(f"一時ディレクトリを使用: {upload_folder}")
+    
+    # フォルダが存在しない場合は作成
+    for folder in [upload_folder, results_folder]:
+        try:
+            if not os.path.exists(folder):
+                os.makedirs(folder)
+            # 書き込み権限をテスト
+            test_file = os.path.join(folder, '.write_test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logger.info(f"フォルダの書き込み権限確認: {folder}")
+        except Exception as e:
+            logger.error(f"フォルダ作成または権限テストエラー: {folder}, {str(e)}")
+            # 一時ディレクトリにフォールバック
+            if folder == upload_folder:
+                upload_folder = tempfile.gettempdir()
+                logger.info(f"アップロードフォルダを一時ディレクトリに変更: {upload_folder}")
+            elif folder == results_folder:
+                results_folder = tempfile.gettempdir()
+                logger.info(f"結果フォルダを一時ディレクトリに変更: {results_folder}")
+
+    app.config['UPLOAD_FOLDER'] = upload_folder
+    app.config['RESULTS_FOLDER'] = results_folder
+    app.config['ALLOWED_EXTENSIONS'] = allowed_extensions
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
+
+    # 設定の初期化
+    # initialize_config関数はグローバルスコープに定義されているため、ここでは直接呼び出す
+    initialize_config()
+    logger.info("アプリケーションを初期化しました")
+
+    # ここに全てのルート関数、ヘルパー関数を登録
+    # ...（既存のルートをすべてapp.routeで登録）...
+
+    # 既存の関数・ルートをappスコープに登録するためにglobals()を使う
+    global allowed_file, extract_text_from_pdf, get_paypal_access_token, create_paypal_payment_link
+    global index, payment_success, payment_cancel, upload_file, process_pdf, download_file
+    global settings, save_settings, test_connection, export_settings, import_settings
+    app.add_url_rule('/', 'index', index)
+    app.add_url_rule('/payment_success', 'payment_success', payment_success)
+    app.add_url_rule('/payment_cancel', 'payment_cancel', payment_cancel)
+    app.add_url_rule('/upload', 'upload_file', upload_file, methods=['POST'])
+    app.add_url_rule('/process_pdf', 'process_pdf', process_pdf, methods=['POST'])
+    app.add_url_rule('/download/<filename>', 'download_file', download_file)
+    app.add_url_rule('/settings', 'settings', settings, methods=['GET'])
+    app.add_url_rule('/settings/save', 'save_settings', save_settings, methods=['POST'])
+    app.add_url_rule('/settings/test_connection', 'test_connection', test_connection, methods=['POST'])
+    app.add_url_rule('/settings/export', 'export_settings', export_settings)
+    app.add_url_rule('/settings/import', 'import_settings', import_settings, methods=['POST'])
+    app.add_url_rule('/history', 'history', history)
+    app.add_url_rule('/history/<filename>', 'history_detail', history_detail)
+    app.add_url_rule('/history/delete', 'delete_history', delete_history, methods=['POST'])
+    app.add_url_rule('/generate_payment_link', 'generate_payment_link', generate_payment_link, methods=['POST'])
+
+    # インタラクティブ修正機能のルートを設定
+    # グローバル変数が定義されているか確認
+    interactive_available = False
+    try:
+        # interactive_correctionモジュールが存在するか確認
+        from interactive_correction import interactive_correction
+        interactive_available = True
+        logger.info("インタラクティブ修正機能が利用可能です")
+    except ImportError:
+        logger.warning("インタラクティブ修正機能は利用できません")
+        interactive_available = False
+        
+    if interactive_available:
+        try:
+            # 独自のルートを追加
+            app.add_url_rule('/correction', 'correction', correction)
+            app.add_url_rule('/api/save_correction', 'api_save_correction', api_save_correction, methods=['POST'])
+            app.add_url_rule('/api/get_suggestions', 'api_get_suggestions', api_get_suggestions, methods=['GET'])
+            
+            # ディレクトリ作成
+            history_dir = os.path.join(os.path.dirname(__file__), 'data', 'correction_history')
+            data_dir = os.path.join(os.path.dirname(__file__), 'data', 'learning_data')
+            os.makedirs(history_dir, exist_ok=True)
+            os.makedirs(data_dir, exist_ok=True)
+            
+            logger.info("インタラクティブ修正機能のルートを設定しました")
+        except Exception as e:
+            logger.error(f"インタラクティブ修正機能のルート設定エラー: {str(e)}")
+
+    return app
 
 from flask import current_app
 
@@ -1330,7 +1255,8 @@ def payment_success():
                              is_pdf_export=False)
     
     try:
-        # PayPal APIで実際の支払い状況を確認（安全なインポート使用）
+        # PayPal APIで実際の支払い状況を確認
+        from payment_status_checker import check_payment_status
         payment_status = check_payment_status(token)
         
         logger.info(f"支払い状況確認: token={token}, status={payment_status}")
@@ -2536,7 +2462,7 @@ def create_paypal_payment_link(amount, customer, request=None):
         logger.error(f"フォールバック決済リンク生成エラー: {str(e)}")
         return ''
 
-# payment_status_checkerは上部で安全にインポート済み
+from payment_status_checker import check_payment_status
 
 # 選択された金額で決済リンクを生成するAPI
 @app.route('/api/generate_payment_link', methods=['POST'])
@@ -3533,329 +3459,8 @@ def create_app():
         # 最低限の機能を持つアプリケーションを返す
         return app
 
-
-# ============================================
-# API キーキャッシュ機能
-# ============================================
-
-def encrypt_api_key(api_key: str) -> str:
-    """
-    Encrypt API key using Fernet encryption
-    
-    Args:
-        api_key: Plain text API key
-        
-    Returns:
-        Encrypted API key as base64 string
-    """
-    try:
-        if not cipher_suite:
-            raise ValueError("Encryption not available")
-        encrypted_key = cipher_suite.encrypt(api_key.encode())
-        return encrypted_key.decode()
-    except Exception as e:
-        logger.error(f"Error encrypting API key: {str(e)}")
-        raise
-
-
-def decrypt_api_key(encrypted_key: str) -> str:
-    """
-    Decrypt API key using Fernet encryption
-    
-    Args:
-        encrypted_key: Encrypted API key as base64 string
-        
-    Returns:
-        Decrypted API key as plain text
-    """
-    try:
-        if not cipher_suite:
-            raise ValueError("Encryption not available")
-        decrypted_key = cipher_suite.decrypt(encrypted_key.encode())
-        return decrypted_key.decode()
-    except Exception as e:
-        logger.error(f"Error decrypting API key: {str(e)}")
-        raise
-
-
-def get_firestore_client():
-    """
-    Get Firestore client with lazy initialization
-    """
-    global db
-    if db is None and FIRESTORE_AVAILABLE:
-        try:
-            db = firestore.Client()
-            app.logger.info("Firestore クライアントを初期化しました")
-        except Exception as e:
-            app.logger.error(f"Firestore クライアントの初期化に失敗: {e}")
-            return None
-    return db
-
-
-def get_cached_api_key(user_id: str) -> Optional[str]:
-    """
-    Retrieve and decrypt API key from Firestore cache
-    
-    Args:
-        user_id: User ID (Firebase Auth UID)
-        
-    Returns:
-        Decrypted API key if valid and not expired, None otherwise
-    """
-    if not FIRESTORE_AVAILABLE:
-        logger.warning("Firestore not available, cannot retrieve cached API key")
-        return None
-        
-    try:
-        client = get_firestore_client()
-        if not client:
-            return None
-            
-        doc_ref = client.collection(COLLECTION_NAME).document(user_id)
-        doc = doc_ref.get()
-        
-        if not doc.exists:
-            logger.info(f"No cached API key found for user: {user_id}")
-            return None
-            
-        data = doc.to_dict()
-        
-        # Check if TTL has expired
-        ttl_time = data.get('ttl')
-        if ttl_time and datetime.utcnow() > ttl_time:
-            logger.info(f"API key expired for user: {user_id}")
-            # Delete expired document
-            doc_ref.delete()
-            return None
-            
-        # Decrypt and return API key
-        encrypted_key = data.get('api_key')
-        if encrypted_key:
-            return decrypt_api_key(encrypted_key)
-            
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error retrieving cached API key for user {user_id}: {str(e)}")
-        return None
-
-
-def cache_api_key(user_id: str, api_key: str, ttl_minutes: int = DEFAULT_TTL_MINUTES) -> bool:
-    """
-    Encrypt and cache API key in Firestore with TTL
-    
-    Args:
-        user_id: User ID (Firebase Auth UID)
-        api_key: Plain text API key to cache
-        ttl_minutes: Time to live in minutes
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    if not FIRESTORE_AVAILABLE:
-        logger.warning("Firestore not available, cannot cache API key")
-        return False
-        
-    try:
-        client = get_firestore_client()
-        if not client:
-            return False
-            
-        # Encrypt API key
-        encrypted_key = encrypt_api_key(api_key)
-        
-        # Calculate TTL timestamp
-        ttl_time = datetime.utcnow() + timedelta(minutes=ttl_minutes)
-        
-        # Prepare document data
-        doc_data = {
-            'api_key': encrypted_key,
-            'created_at': SERVER_TIMESTAMP,
-            'ttl': ttl_time
-        }
-        
-        # Save to Firestore
-        doc_ref = client.collection(COLLECTION_NAME).document(user_id)
-        doc_ref.set(doc_data)
-        
-        logger.info(f"API key cached successfully for user: {user_id}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error caching API key for user {user_id}: {str(e)}")
-        return False
-
-
-# ============================================
-# API キーキャッシュのエンドポイント
-# ============================================
-
-@app.route('/api/cache_api_key', methods=['POST'])
-def cache_api_key_endpoint():
-    """
-    POST /api/cache_api_key
-    Cache API key for a user with optional TTL
-    
-    Request JSON:
-    {
-        "user_id": "firebase_auth_uid",
-        "api_key": "your_api_key_here",
-        "ttl_minutes": 60  // Optional, defaults to 60
-    }
-    """
-    try:
-        if not FIRESTORE_AVAILABLE:
-            return jsonify({'error': 'API key cache service not available'}), 503
-            
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No JSON data provided'}), 400
-            
-        user_id = data.get('user_id')
-        api_key = data.get('api_key')
-        ttl_minutes = data.get('ttl_minutes', DEFAULT_TTL_MINUTES)
-        
-        # Validate required fields
-        if not user_id or not api_key:
-            return jsonify({'error': 'user_id and api_key are required'}), 400
-            
-        # Validate TTL
-        if not isinstance(ttl_minutes, int) or ttl_minutes <= 0:
-            return jsonify({'error': 'ttl_minutes must be a positive integer'}), 400
-            
-        # Cache the API key
-        success = cache_api_key(user_id, api_key, ttl_minutes)
-        
-        if success:
-            return jsonify({
-                'message': 'API key cached successfully',
-                'ttl_minutes': ttl_minutes,
-                'expires_at': (datetime.utcnow() + timedelta(minutes=ttl_minutes)).isoformat()
-            }), 200
-        else:
-            return jsonify({'error': 'Failed to cache API key'}), 500
-            
-    except Exception as e:
-        logger.error(f"Error in cache_api_key_endpoint: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/run_api', methods=['POST'])
-def run_api_endpoint():
-    """
-    POST /api/run_api
-    Execute external API call using cached API key
-    
-    Request JSON:
-    {
-        "user_id": "firebase_auth_uid",
-        "api_endpoint": "https://api.example.com/data",
-        "method": "GET",  // Optional, defaults to GET
-        "headers": {},    // Optional additional headers
-        "data": {}        // Optional request data for POST/PUT
-    }
-    """
-    try:
-        if not FIRESTORE_AVAILABLE:
-            return jsonify({'error': 'API key cache service not available'}), 503
-            
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No JSON data provided'}), 400
-            
-        user_id = data.get('user_id')
-        api_endpoint = data.get('api_endpoint')
-        method = data.get('method', 'GET').upper()
-        additional_headers = data.get('headers', {})
-        request_data = data.get('data', {})
-        
-        # Validate required fields
-        if not user_id or not api_endpoint:
-            return jsonify({'error': 'user_id and api_endpoint are required'}), 400
-            
-        # Validate HTTP method
-        if method not in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
-            return jsonify({'error': 'Invalid HTTP method'}), 400
-            
-        # Retrieve cached API key
-        cached_api_key = get_cached_api_key(user_id)
-        
-        if not cached_api_key:
-            return jsonify({'error': 'No valid API key found. Please cache your API key first.'}), 401
-            
-        # Prepare headers with API key
-        headers = {
-            'Authorization': f'Bearer {cached_api_key}',
-            'Content-Type': 'application/json'
-        }
-        headers.update(additional_headers)
-        
-        # Make API request
-        response = None
-        if method == 'GET':
-            response = requests.get(api_endpoint, headers=headers, timeout=30)
-        elif method == 'POST':
-            response = requests.post(api_endpoint, headers=headers, json=request_data, timeout=30)
-        elif method == 'PUT':
-            response = requests.put(api_endpoint, headers=headers, json=request_data, timeout=30)
-        elif method == 'DELETE':
-            response = requests.delete(api_endpoint, headers=headers, timeout=30)
-        elif method == 'PATCH':
-            response = requests.patch(api_endpoint, headers=headers, json=request_data, timeout=30)
-            
-        # Return API response
-        try:
-            response_data = response.json()
-        except:
-            response_data = response.text
-            
-        return jsonify({
-            'status_code': response.status_code,
-            'headers': dict(response.headers),
-            'data': response_data
-        }), response.status_code
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"API request error: {str(e)}")
-        return jsonify({'error': f'API request failed: {str(e)}'}), 500
-    except Exception as e:
-        logger.error(f"Error in run_api_endpoint: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/health', methods=['GET'])
-def api_health_check():
-    """Health check endpoint for API key cache"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.utcnow().isoformat(),
-        'service': 'api-key-cache',
-        'firestore_available': FIRESTORE_AVAILABLE,
-        'encryption_available': cipher_suite is not None
-    }), 200
-
 # Gunicorn用のアプリケーションオブジェクト
-try:
-    application = create_app()
-    print("Application created successfully")
-except Exception as e:
-    print(f"Error creating application: {e}")
-    import traceback
-    traceback.print_exc()
-    # 最小限のFlaskアプリケーションを作成
-    from flask import Flask
-    application = Flask(__name__)
-    
-    @application.route('/health')
-    def health():
-        return {'status': 'error', 'message': 'Application failed to initialize properly'}
-    
-    @application.route('/')
-    def root():
-        return {'status': 'error', 'message': 'Application failed to initialize properly'}
+application = create_app()
 
 # アプリ実行（開発環境用）
 if __name__ == '__main__':

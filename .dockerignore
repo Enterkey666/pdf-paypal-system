@@ -1,0 +1,108 @@
+# Git関連
+.git
+.gitignore
+.gitattributes
+
+# ドキュメント
+README.md
+README.txt
+DEPLOYMENT_GUIDE.md
+*.md
+
+# 開発ツール
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Python関連
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.pytest_cache
+
+# 仮想環境
+venv/
+env/
+ENV/
+
+# 設定ファイル
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# ローカルデータベース
+*.db
+*.sqlite
+
+# ログファイル
+logs/
+*.log
+
+# 一時ファイル
+tmp/
+temp/
+*.tmp
+
+# OS関連
+.DS_Store
+Thumbs.db
+
+# Dockerファイル（不要なものは除外）
+Dockerfile.simple
+docker-compose.yml
+
+# バックアップファイル
+*.backup
+*.backup2
+*.bak
+*.original
+app.py.backup_*
+
+# セッションファイル
+flask_session/
+
+# エクスポートファイル（一時的なもの）
+*.exe
+GoogleCloudSDKInstaller.exe
+
+# テストファイル
+test_*.py
+*_test.py
+debug_*.py
+simple_*.py
+
+# バッチファイル
+*.bat
+*.command
+*.inf
+
+# アップロード一時ファイル（コンテナでは動的作成）
+uploads/*.pdf
+results/*.json
+
+# Node.js関連（もしあれば）
+node_modules/
+npm-debug.log
+
+# 設定ファイル例
+config.example.json
+
+# サンプルアプリ
+sample-app/
