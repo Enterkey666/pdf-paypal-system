@@ -78,7 +78,35 @@ for key in ['PORT', 'UPLOAD_FOLDER', 'RESULTS_FOLDER', 'SECRET_KEY', 'PAYPAL_CLI
 # ルーティング
 @app.route('/')
 def index():
-    return render_template('index.html', title="PDF PayPal System - デバッグモード")
+    # テンプレートレンダリングのエラーを避けるため、直接HTMLを返す
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PDF PayPal System - デバッグモード</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+            h1 { color: #333; }
+            .info { background-color: #f4f4f4; padding: 20px; border-radius: 5px; }
+            .success { color: green; }
+            .error { color: red; }
+        </style>
+    </head>
+    <body>
+        <h1>PDF PayPal System - デバッグモード</h1>
+        <div class="info">
+            <p class="success">アプリケーションは正常に起動しています。</p>
+            <p>以下のエンドポイントでデバッグ情報を確認できます：</p>
+            <ul>
+                <li><a href="/health">/health</a> - システム状態の確認</li>
+                <li><a href="/debug">/debug</a> - デバッグ情報の表示</li>
+            </ul>
+        </div>
+    </body>
+    </html>
+    '''
 
 @app.route('/health')
 def health():
