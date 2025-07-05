@@ -1834,8 +1834,9 @@ def settings():
             paypal_status = False
     
     # 権限に基づいて表示内容を決定
-    show_all_settings = is_admin
+    show_all_settings = is_admin  # 管理者は全設定にアクセス可能
     show_sandbox_settings = True  # sandboxモードの設定は常に表示
+    show_production_settings = is_admin  # 本番モードは管理者のみアクセス可能
     
     # レンダリング前の最終確認
     logger.info(f"設定ページレンダリング前の最終確認 - is_admin: {is_admin}, show_all_settings: {show_all_settings}")
@@ -1847,20 +1848,49 @@ def settings():
                            config=config,
                            paypal_status=paypal_status,
                            show_all_settings=show_all_settings,
-                           show_sandbox_settings=show_sandbox_settings)
+                           show_sandbox_settings=show_sandbox_settings,
+                           show_production_settings=show_production_settings)
 
 # 履歴一覧ページ
 @app.route('/history')
 @login_required
 def history():
-    # 
-#     履歴一覧ページ
+    # 履歴一覧ページ（キャッシュ容量管理付き）
     
     history_data = []
+    cache_info = {}
+    
     try:
         results_folder = app.config['RESULTS_FOLDER']
         files = [f for f in os.listdir(results_folder) if f.startswith('payment_links_') and f.endswith('.json')]
         files.sort(reverse=True)
+        
+        # キャッシュ情報を計算
+        total_files = len(files)
+        total_size = 0
+        for file in files:
+            file_path = os.path.join(results_folder, file)
+            if os.path.exists(file_path):
+                total_size += os.path.getsize(file_path)
+        
+        cache_info = {
+            'total_files': total_files,
+            'total_size_mb': round(total_size / (1024 * 1024), 2),
+            'max_files': 100,  # 最大ファイル数
+            'max_size_mb': 50  # 最大サイズ(MB)
+        }
+        
+        # 制限を超えている場合は古いファイルを削除
+        if total_files > cache_info['max_files']:
+            files_to_delete = files[cache_info['max_files']:]
+            for file_to_delete in files_to_delete:
+                try:
+                    os.remove(os.path.join(results_folder, file_to_delete))
+                    logger.info(f"キャッシュ容量管理: 古いファイルを削除しました - {file_to_delete}")
+                except:
+                    pass
+            # ファイルリストを更新
+            files = files[:cache_info['max_files']]
         
         # 各ファイルの内容を読み込み、顧客名情報を取得
         for file in files:
@@ -1914,7 +1944,10 @@ def history():
                 })
     except Exception as e:
         logger.error(f"履歴ファイル一覧取得エラー: {str(e)}")
-    return render_template('history.html', history_data=history_data)
+    
+    return render_template('history.html', 
+                           history_data=history_data, 
+                           cache_info=cache_info)
 
 @app.route('/history/<filename>')
 @login_required
