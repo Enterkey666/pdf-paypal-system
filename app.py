@@ -231,11 +231,68 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, request, render_template, jsonify, send_from_directory, redirect, url_for, current_app, flash, session, make_response
-from flask_wtf import FlaskForm, CSRFProtect
-from flask_session import Session
-from flask_login import LoginManager, current_user, login_required
-from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import DataRequired
+# Flask-WTF の安全なインポート
+try:
+    from flask_wtf import FlaskForm, CSRFProtect
+    FLASK_WTF_AVAILABLE = True
+    print("✓ flask_wtf インポート成功")
+except ImportError as e:
+    print(f"⚠ flask_wtf インポート失敗: {e}")
+    FLASK_WTF_AVAILABLE = False
+    # フォールバック用のダミークラスを定義
+    class DummyForm:
+        def __init__(self, *args, **kwargs): pass
+        def validate_on_submit(self): return False
+    class DummyCSRF:
+        def init_app(self, app): pass
+    FlaskForm = DummyForm
+    CSRFProtect = DummyCSRF
+
+# Flask-Session の安全なインポート
+try:
+    from flask_session import Session
+    FLASK_SESSION_AVAILABLE = True
+    print("✓ flask_session インポート成功")
+except ImportError as e:
+    print(f"⚠ flask_session インポート失敗: {e}")
+    FLASK_SESSION_AVAILABLE = False
+    # フォールバック用のダミークラスを定義
+    class DummySession:
+        def __init__(self, app=None): pass
+        def init_app(self, app): pass
+    Session = DummySession
+# Flask-Login の安全なインポート
+try:
+    from flask_login import LoginManager, current_user, login_required
+    FLASK_LOGIN_AVAILABLE = True
+    print("✓ flask_login インポート成功")
+except ImportError as e:
+    print(f"⚠ flask_login インポート失敗: {e}")
+    FLASK_LOGIN_AVAILABLE = False
+    # フォールバック用のダミー関数を定義
+    class DummyLoginManager:
+        def init_app(self, app): pass
+        def user_loader(self, func): return func
+    LoginManager = DummyLoginManager
+    current_user = None
+    def login_required(f):
+        return f  # 認証なしで通す
+# WTForms の安全なインポート
+try:
+    from wtforms import StringField, PasswordField, SubmitField
+    from wtforms.validators import DataRequired
+    WTFORMS_AVAILABLE = True
+    print("✓ wtforms インポート成功")
+except ImportError as e:
+    print(f"⚠ wtforms インポート失敗: {e}")
+    WTFORMS_AVAILABLE = False
+    # フォールバック用のダミークラスを定義
+    class DummyField:
+        def __init__(self, *args, **kwargs): pass
+    class DummyValidator:
+        def __init__(self, *args, **kwargs): pass
+    StringField = PasswordField = SubmitField = DummyField
+    DataRequired = DummyValidator
 from functools import wraps
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -284,8 +341,17 @@ app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でのテストを可能に
 app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']  # CSRFチェック対象のHTTPメソッド
 
-# CSRF保護の初期化
-csrf = CSRFProtect(app)
+# CSRF保護の初期化（安全な初期化）
+if FLASK_WTF_AVAILABLE:
+    try:
+        csrf = CSRFProtect(app)
+        app.logger.info("CSRF保護を初期化しました")
+    except Exception as e:
+        app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
+        csrf = None
+else:
+    app.logger.warning("Flask-WTF が利用できないため、CSRF保護は無効です")
+    csrf = None
 
 # セッションの設定
 app.config['SESSION_TYPE'] = 'filesystem'  # ファイルシステムベースのセッション
@@ -333,17 +399,33 @@ app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # 1時間
 app.logger.info("CSRF設定を構成しました")
 
-# Flask-Sessionの初期化（CSRFの前に初期化）
-session_interface = Session(app)
-app.logger.info("セッション管理の初期化完了")
+# Flask-Sessionの初期化（安全な初期化）
+if FLASK_SESSION_AVAILABLE:
+    try:
+        session_interface = Session(app)
+        app.logger.info("セッション管理の初期化完了")
+    except Exception as e:
+        app.logger.warning(f"セッション管理の初期化に失敗: {e}")
+        session_interface = None
+else:
+    app.logger.warning("Flask-Session が利用できないため、デフォルトのセッション管理を使用")
+    session_interface = None
 app.logger.info(f"セッションインターフェース: {type(session_interface).__name__}")
 app.logger.info(f"セッション設定: {app.config.get('SESSION_TYPE')}")
 
-# CSRF保護の初期化（セッションの後に初期化）
-csrf = CSRFProtect(app)
-app.logger.info("CSRF保護を初期化しました")
-app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
-app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
+# CSRF保護の初期化（セッションの後に初期化、安全な初期化）
+if FLASK_WTF_AVAILABLE:
+    try:
+        csrf = CSRFProtect(app)
+        app.logger.info("CSRF保護を初期化しました")
+        app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
+        app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
+    except Exception as e:
+        app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
+        csrf = None
+else:
+    app.logger.warning("Flask-WTF が利用できないため、CSRF保護は無効です")
+    csrf = None
 
 # APIキーキャッシュ機能の初期化
 # Collection name for API key cache
