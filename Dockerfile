@@ -20,8 +20,9 @@ COPY . .
 # アップロードとダウンロードフォルダの作成
 RUN mkdir -p uploads results
 
-# PYTHONPATHを設定してアプリディレクトリを検索パスに追加
-ENV PYTHONPATH="/app:${PYTHONPATH}"
+# PYTHONPATHを設定してアプリディレクトリを検索パスに追加（より明示的に）
+ENV PYTHONPATH="/app:/app/modules:/app/utils:${PYTHONPATH}"
+RUN echo "PYTHONPATH set to $PYTHONPATH"
 
 # 環境変数の設定
 ENV PORT=8080
@@ -29,5 +30,10 @@ ENV PORT=8080
 # ポートの公開
 EXPOSE 8080
 
-# アプリケーションの実行
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "120", "--workers", "2", "--log-level", "info", "--capture-output", "--enable-stdio-inheritance", "app:application"]
+# Gunicornでアプリケーションを起動（パスを明示的に指定）
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 \
+    --pythonpath /app \
+    --log-level debug \
+    --capture-output \
+    --enable-stdio-inheritance \
+    app:application
