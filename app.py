@@ -55,9 +55,12 @@ try:
     from google.cloud import firestore
     from google.cloud.firestore import SERVER_TIMESTAMP
     FIRESTORE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     FIRESTORE_AVAILABLE = False
-    print("Warning: google-cloud-firestore not available. API key cache will be disabled.")
+    print(f"Warning: google-cloud-firestore not available. API key cache will be disabled. Error: {e}")
+except Exception as e:
+    FIRESTORE_AVAILABLE = False
+    print(f"Warning: Firestore initialization failed. API key cache will be disabled. Error: {e}")
 
 # PayPal支払いステータス関連のインポート
 from payment_status_checker import check_payment_status
@@ -315,12 +318,13 @@ COLLECTION_NAME = "api_key_cache"
 DEFAULT_TTL_MINUTES = 60
 
 # Initialize Firestore client if available
+db = None
 if FIRESTORE_AVAILABLE:
     try:
-        db = firestore.Client()
-        app.logger.info("Firestore クライアントを初期化しました")
+        # Firestoreクライアントの初期化を遅延させる
+        app.logger.info("Firestore は利用可能です")
     except Exception as e:
-        app.logger.error(f"Firestore クライアントの初期化に失敗: {e}")
+        app.logger.error(f"Firestore の確認に失敗: {e}")
         FIRESTORE_AVAILABLE = False
 
 # Encryption key for API keys
@@ -328,12 +332,13 @@ ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
 if isinstance(ENCRYPTION_KEY, str):
     ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
 
+cipher_suite = None
 try:
     cipher_suite = Fernet(ENCRYPTION_KEY)
     app.logger.info("API キー暗号化機能を初期化しました")
 except Exception as e:
-    app.logger.error(f"API キー暗号化機能の初期化に失敗: {e}")
-    cipher_suite = None
+    app.logger.warning(f"API キー暗号化機能の初期化に失敗: {e}")
+    app.logger.warning("API キーキャッシュ機能は無効になります")
 # paypal_utils.pyからの関数インポート
 # ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
@@ -3542,6 +3547,21 @@ def decrypt_api_key(encrypted_key: str) -> str:
         raise
 
 
+def get_firestore_client():
+    """
+    Get Firestore client with lazy initialization
+    """
+    global db
+    if db is None and FIRESTORE_AVAILABLE:
+        try:
+            db = firestore.Client()
+            app.logger.info("Firestore クライアントを初期化しました")
+        except Exception as e:
+            app.logger.error(f"Firestore クライアントの初期化に失敗: {e}")
+            return None
+    return db
+
+
 def get_cached_api_key(user_id: str) -> Optional[str]:
     """
     Retrieve and decrypt API key from Firestore cache
@@ -3557,7 +3577,11 @@ def get_cached_api_key(user_id: str) -> Optional[str]:
         return None
         
     try:
-        doc_ref = db.collection(COLLECTION_NAME).document(user_id)
+        client = get_firestore_client()
+        if not client:
+            return None
+            
+        doc_ref = client.collection(COLLECTION_NAME).document(user_id)
         doc = doc_ref.get()
         
         if not doc.exists:
@@ -3603,6 +3627,10 @@ def cache_api_key(user_id: str, api_key: str, ttl_minutes: int = DEFAULT_TTL_MIN
         return False
         
     try:
+        client = get_firestore_client()
+        if not client:
+            return False
+            
         # Encrypt API key
         encrypted_key = encrypt_api_key(api_key)
         
@@ -3617,7 +3645,7 @@ def cache_api_key(user_id: str, api_key: str, ttl_minutes: int = DEFAULT_TTL_MIN
         }
         
         # Save to Firestore
-        doc_ref = db.collection(COLLECTION_NAME).document(user_id)
+        doc_ref = client.collection(COLLECTION_NAME).document(user_id)
         doc_ref.set(doc_data)
         
         logger.info(f"API key cached successfully for user: {user_id}")
