@@ -47,6 +47,18 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from dotenv import load_dotenv
 
+# APIキーキャッシュ機能用のインポート
+from datetime import timedelta
+from typing import Optional
+from cryptography.fernet import Fernet
+try:
+    from google.cloud import firestore
+    from google.cloud.firestore import SERVER_TIMESTAMP
+    FIRESTORE_AVAILABLE = True
+except ImportError:
+    FIRESTORE_AVAILABLE = False
+    print("Warning: google-cloud-firestore not available. API key cache will be disabled.")
+
 # PayPal支払いステータス関連のインポート
 from payment_status_checker import check_payment_status
 from payment_status_updater import update_payment_status_by_order_id, update_pending_payment_statuses
@@ -296,6 +308,32 @@ csrf = CSRFProtect(app)
 app.logger.info("CSRF保護を初期化しました")
 app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
 app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
+
+# APIキーキャッシュ機能の初期化
+# Collection name for API key cache
+COLLECTION_NAME = "api_key_cache"
+DEFAULT_TTL_MINUTES = 60
+
+# Initialize Firestore client if available
+if FIRESTORE_AVAILABLE:
+    try:
+        db = firestore.Client()
+        app.logger.info("Firestore クライアントを初期化しました")
+    except Exception as e:
+        app.logger.error(f"Firestore クライアントの初期化に失敗: {e}")
+        FIRESTORE_AVAILABLE = False
+
+# Encryption key for API keys
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
+if isinstance(ENCRYPTION_KEY, str):
+    ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
+
+try:
+    cipher_suite = Fernet(ENCRYPTION_KEY)
+    app.logger.info("API キー暗号化機能を初期化しました")
+except Exception as e:
+    app.logger.error(f"API キー暗号化機能の初期化に失敗: {e}")
+    cipher_suite = None
 # paypal_utils.pyからの関数インポート
 # ローカルモジュールのインポート
 from paypal_utils import cancel_paypal_order, check_order_status, get_paypal_access_token
@@ -3458,6 +3496,287 @@ def create_app():
         logger.critical(traceback.format_exc())
         # 最低限の機能を持つアプリケーションを返す
         return app
+
+
+# ============================================
+# API キーキャッシュ機能
+# ============================================
+
+def encrypt_api_key(api_key: str) -> str:
+    """
+    Encrypt API key using Fernet encryption
+    
+    Args:
+        api_key: Plain text API key
+        
+    Returns:
+        Encrypted API key as base64 string
+    """
+    try:
+        if not cipher_suite:
+            raise ValueError("Encryption not available")
+        encrypted_key = cipher_suite.encrypt(api_key.encode())
+        return encrypted_key.decode()
+    except Exception as e:
+        logger.error(f"Error encrypting API key: {str(e)}")
+        raise
+
+
+def decrypt_api_key(encrypted_key: str) -> str:
+    """
+    Decrypt API key using Fernet encryption
+    
+    Args:
+        encrypted_key: Encrypted API key as base64 string
+        
+    Returns:
+        Decrypted API key as plain text
+    """
+    try:
+        if not cipher_suite:
+            raise ValueError("Encryption not available")
+        decrypted_key = cipher_suite.decrypt(encrypted_key.encode())
+        return decrypted_key.decode()
+    except Exception as e:
+        logger.error(f"Error decrypting API key: {str(e)}")
+        raise
+
+
+def get_cached_api_key(user_id: str) -> Optional[str]:
+    """
+    Retrieve and decrypt API key from Firestore cache
+    
+    Args:
+        user_id: User ID (Firebase Auth UID)
+        
+    Returns:
+        Decrypted API key if valid and not expired, None otherwise
+    """
+    if not FIRESTORE_AVAILABLE:
+        logger.warning("Firestore not available, cannot retrieve cached API key")
+        return None
+        
+    try:
+        doc_ref = db.collection(COLLECTION_NAME).document(user_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            logger.info(f"No cached API key found for user: {user_id}")
+            return None
+            
+        data = doc.to_dict()
+        
+        # Check if TTL has expired
+        ttl_time = data.get('ttl')
+        if ttl_time and datetime.utcnow() > ttl_time:
+            logger.info(f"API key expired for user: {user_id}")
+            # Delete expired document
+            doc_ref.delete()
+            return None
+            
+        # Decrypt and return API key
+        encrypted_key = data.get('api_key')
+        if encrypted_key:
+            return decrypt_api_key(encrypted_key)
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error retrieving cached API key for user {user_id}: {str(e)}")
+        return None
+
+
+def cache_api_key(user_id: str, api_key: str, ttl_minutes: int = DEFAULT_TTL_MINUTES) -> bool:
+    """
+    Encrypt and cache API key in Firestore with TTL
+    
+    Args:
+        user_id: User ID (Firebase Auth UID)
+        api_key: Plain text API key to cache
+        ttl_minutes: Time to live in minutes
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not FIRESTORE_AVAILABLE:
+        logger.warning("Firestore not available, cannot cache API key")
+        return False
+        
+    try:
+        # Encrypt API key
+        encrypted_key = encrypt_api_key(api_key)
+        
+        # Calculate TTL timestamp
+        ttl_time = datetime.utcnow() + timedelta(minutes=ttl_minutes)
+        
+        # Prepare document data
+        doc_data = {
+            'api_key': encrypted_key,
+            'created_at': SERVER_TIMESTAMP,
+            'ttl': ttl_time
+        }
+        
+        # Save to Firestore
+        doc_ref = db.collection(COLLECTION_NAME).document(user_id)
+        doc_ref.set(doc_data)
+        
+        logger.info(f"API key cached successfully for user: {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error caching API key for user {user_id}: {str(e)}")
+        return False
+
+
+# ============================================
+# API キーキャッシュのエンドポイント
+# ============================================
+
+@app.route('/api/cache_api_key', methods=['POST'])
+def cache_api_key_endpoint():
+    """
+    POST /api/cache_api_key
+    Cache API key for a user with optional TTL
+    
+    Request JSON:
+    {
+        "user_id": "firebase_auth_uid",
+        "api_key": "your_api_key_here",
+        "ttl_minutes": 60  // Optional, defaults to 60
+    }
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return jsonify({'error': 'API key cache service not available'}), 503
+            
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
+        user_id = data.get('user_id')
+        api_key = data.get('api_key')
+        ttl_minutes = data.get('ttl_minutes', DEFAULT_TTL_MINUTES)
+        
+        # Validate required fields
+        if not user_id or not api_key:
+            return jsonify({'error': 'user_id and api_key are required'}), 400
+            
+        # Validate TTL
+        if not isinstance(ttl_minutes, int) or ttl_minutes <= 0:
+            return jsonify({'error': 'ttl_minutes must be a positive integer'}), 400
+            
+        # Cache the API key
+        success = cache_api_key(user_id, api_key, ttl_minutes)
+        
+        if success:
+            return jsonify({
+                'message': 'API key cached successfully',
+                'ttl_minutes': ttl_minutes,
+                'expires_at': (datetime.utcnow() + timedelta(minutes=ttl_minutes)).isoformat()
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to cache API key'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in cache_api_key_endpoint: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/run_api', methods=['POST'])
+def run_api_endpoint():
+    """
+    POST /api/run_api
+    Execute external API call using cached API key
+    
+    Request JSON:
+    {
+        "user_id": "firebase_auth_uid",
+        "api_endpoint": "https://api.example.com/data",
+        "method": "GET",  // Optional, defaults to GET
+        "headers": {},    // Optional additional headers
+        "data": {}        // Optional request data for POST/PUT
+    }
+    """
+    try:
+        if not FIRESTORE_AVAILABLE:
+            return jsonify({'error': 'API key cache service not available'}), 503
+            
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
+        user_id = data.get('user_id')
+        api_endpoint = data.get('api_endpoint')
+        method = data.get('method', 'GET').upper()
+        additional_headers = data.get('headers', {})
+        request_data = data.get('data', {})
+        
+        # Validate required fields
+        if not user_id or not api_endpoint:
+            return jsonify({'error': 'user_id and api_endpoint are required'}), 400
+            
+        # Validate HTTP method
+        if method not in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+            return jsonify({'error': 'Invalid HTTP method'}), 400
+            
+        # Retrieve cached API key
+        cached_api_key = get_cached_api_key(user_id)
+        
+        if not cached_api_key:
+            return jsonify({'error': 'No valid API key found. Please cache your API key first.'}), 401
+            
+        # Prepare headers with API key
+        headers = {
+            'Authorization': f'Bearer {cached_api_key}',
+            'Content-Type': 'application/json'
+        }
+        headers.update(additional_headers)
+        
+        # Make API request
+        response = None
+        if method == 'GET':
+            response = requests.get(api_endpoint, headers=headers, timeout=30)
+        elif method == 'POST':
+            response = requests.post(api_endpoint, headers=headers, json=request_data, timeout=30)
+        elif method == 'PUT':
+            response = requests.put(api_endpoint, headers=headers, json=request_data, timeout=30)
+        elif method == 'DELETE':
+            response = requests.delete(api_endpoint, headers=headers, timeout=30)
+        elif method == 'PATCH':
+            response = requests.patch(api_endpoint, headers=headers, json=request_data, timeout=30)
+            
+        # Return API response
+        try:
+            response_data = response.json()
+        except:
+            response_data = response.text
+            
+        return jsonify({
+            'status_code': response.status_code,
+            'headers': dict(response.headers),
+            'data': response_data
+        }), response.status_code
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request error: {str(e)}")
+        return jsonify({'error': f'API request failed: {str(e)}'}), 500
+    except Exception as e:
+        logger.error(f"Error in run_api_endpoint: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/health', methods=['GET'])
+def api_health_check():
+    """Health check endpoint for API key cache"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat(),
+        'service': 'api-key-cache',
+        'firestore_available': FIRESTORE_AVAILABLE,
+        'encryption_available': cipher_suite is not None
+    }), 200
 
 # Gunicorn用のアプリケーションオブジェクト
 application = create_app()
