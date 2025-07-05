@@ -11,12 +11,24 @@ import json
 import sqlite3
 import logging
 import secrets
+import hashlib
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
+
+def safe_generate_password_hash(password):
+    """Python 3.9互換の安全なパスワードハッシュ生成"""
+    try:
+        # pbkdf2を明示的に指定してscryptを回避
+        return generate_password_hash(password, method='pbkdf2:sha256')
+    except:
+        # フォールバック: シンプルハッシュ
+        salt = secrets.token_hex(16)
+        hash_value = hashlib.sha256((password + salt).encode()).hexdigest()
+        return f'simple:{salt}:{hash_value}'
 
 # データベースのパス
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'pdf_paypal.db')
@@ -143,9 +155,17 @@ class User(UserMixin):
     def check_password(self, password):
         # 簡易ハッシュ化されたパスワードの場合
         if self.password_hash.startswith('simple:'):
-            import hashlib
-            simple_hash = self.password_hash[7:]  # 'simple:' プレフィックスを除去
-            return simple_hash == hashlib.sha256(password.encode()).hexdigest()
+            try:
+                parts = self.password_hash.split(':')
+                if len(parts) == 3:  # 'simple:salt:hash' 形式
+                    _, salt, stored_hash = parts
+                    test_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+                    return stored_hash == test_hash
+                else:  # 古い形式 'simple:hash'
+                    simple_hash = self.password_hash[7:]
+                    return simple_hash == hashlib.sha256(password.encode()).hexdigest()
+            except:
+                return False
         
         # scryptハッシュの互換性問題を修正
         if self.password_hash.startswith('scrypt:'):
@@ -208,7 +228,7 @@ def create_user(username, password, email=None, is_admin=False):
         # ユーザーを作成
         cursor.execute(
             "INSERT INTO users (username, password_hash, email, is_admin, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
-            (username, generate_password_hash(password), email, is_admin)
+            (username, safe_generate_password_hash(password), email, is_admin)
         )
         conn.commit()
         
