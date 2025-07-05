@@ -127,12 +127,58 @@ def health():
 @app.route('/debug')
 def debug():
     # デバッグ情報を表示するページ
-    debug_info = {
-        "routes": [str(rule) for rule in app.url_map.iter_rules()],
-        "blueprints": list(app.blueprints.keys()) if hasattr(app, 'blueprints') else [],
-        "config": {k: v for k, v in app.config.items() if k not in ['SECRET_KEY']}
-    }
-    return jsonify(debug_info)
+    try:
+        # 安全に表示できる情報のみを取得
+        routes = []
+        for rule in app.url_map.iter_rules():
+            try:
+                routes.append(str(rule))
+            except Exception as e:
+                routes.append(f"Error converting rule: {type(e).__name__}")
+        
+        # ブループリント情報
+        blueprints = []
+        if hasattr(app, 'blueprints'):
+            for bp_name in app.blueprints.keys():
+                blueprints.append(bp_name)
+        
+        # 設定情報（機密情報を除外）
+        safe_config = {}
+        sensitive_keys = ['SECRET_KEY', 'PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']
+        for k, v in app.config.items():
+            if k in sensitive_keys:
+                safe_config[k] = '[REDACTED]' if v else 'Not set'
+            else:
+                # 複雑なオブジェクトは文字列化できない可能性がある
+                try:
+                    if isinstance(v, (str, int, float, bool, type(None))):
+                        safe_config[k] = v
+                    else:
+                        safe_config[k] = str(type(v))
+                except Exception:
+                    safe_config[k] = f"<{type(v).__name__}>"
+        
+        # システム情報
+        import platform
+        import sys
+        system_info = {
+            "python_version": sys.version,
+            "platform": platform.platform(),
+            "environment": os.environ.get('FLASK_ENV', 'production')
+        }
+        
+        debug_info = {
+            "routes": routes,
+            "blueprints": blueprints,
+            "config": safe_config,
+            "system": system_info
+        }
+        
+        return jsonify(debug_info)
+    except Exception as e:
+        logger.error(f"デバッグ情報取得エラー: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
 # エラーハンドラー
 @app.errorhandler(404)
