@@ -1138,124 +1138,7 @@ def initialize_config():
     except Exception as e:
         logger.error(f"設定の初期化中にエラーが発生しました: {str(e)}")
 
-def create_app():
-    # アプリ起動時にキャッシュをクリア
-    clear_cache()
-    
-    # シークレットキーの確認（既に設定されているので再設定しない）
-    if not app.secret_key or app.secret_key == 'your_secret_key_here':
-        app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
-        app.logger.info(f"シークレットキーを更新しました")
-    
-    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 最大アップロードサイズを50MBに制限
-
-    # アップロードとダウンロードの設定
-    # Renderのような環境では一時ディレクトリを使用
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # 環境変数からフォルダ設定を取得、存在しない場合はデフォルト値を使用
-    upload_folder = os.environ.get('UPLOAD_FOLDER')
-    if upload_folder is None or not upload_folder.strip():
-        upload_folder = os.path.join(base_dir, 'uploads')
-        logger.info(f"UPLOAD_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {upload_folder}")
-    
-    results_folder = os.environ.get('RESULTS_FOLDER')
-    if results_folder is None or not results_folder.strip():
-        results_folder = os.path.join(base_dir, 'results')
-        logger.info(f"RESULTS_FOLDER環境変数が設定されていないため、デフォルト値を使用します: {results_folder}")
-    
-    allowed_extensions = {'pdf'}
-    
-    # クラウド環境では一時ディレクトリを使用する場合がある
-    if os.environ.get('USE_TEMP_DIR', 'false').lower() == 'true':
-        upload_folder = tempfile.gettempdir()
-        results_folder = tempfile.gettempdir()
-        logger.info(f"一時ディレクトリを使用: {upload_folder}")
-    
-    # フォルダが存在しない場合は作成
-    for folder in [upload_folder, results_folder]:
-        try:
-            if not os.path.exists(folder):
-                os.makedirs(folder)
-            # 書き込み権限をテスト
-            test_file = os.path.join(folder, '.write_test')
-            with open(test_file, 'w') as f:
-                f.write('test')
-            os.remove(test_file)
-            logger.info(f"フォルダの書き込み権限確認: {folder}")
-        except Exception as e:
-            logger.error(f"フォルダ作成または権限テストエラー: {folder}, {str(e)}")
-            # 一時ディレクトリにフォールバック
-            if folder == upload_folder:
-                upload_folder = tempfile.gettempdir()
-                logger.info(f"アップロードフォルダを一時ディレクトリに変更: {upload_folder}")
-            elif folder == results_folder:
-                results_folder = tempfile.gettempdir()
-                logger.info(f"結果フォルダを一時ディレクトリに変更: {results_folder}")
-
-    app.config['UPLOAD_FOLDER'] = upload_folder
-    app.config['RESULTS_FOLDER'] = results_folder
-    app.config['ALLOWED_EXTENSIONS'] = allowed_extensions
-    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大16MB
-
-    # 設定の初期化
-    # initialize_config関数はグローバルスコープに定義されているため、ここでは直接呼び出す
-    initialize_config()
-    logger.info("アプリケーションを初期化しました")
-
-    # ここに全てのルート関数、ヘルパー関数を登録
-    # ...（既存のルートをすべてapp.routeで登録）...
-
-    # 既存の関数・ルートをappスコープに登録するためにglobals()を使う
-    global allowed_file, extract_text_from_pdf, get_paypal_access_token, create_paypal_payment_link
-    global index, payment_success, payment_cancel, upload_file, process_pdf, download_file
-    global settings, save_settings, test_connection, export_settings, import_settings
-    app.add_url_rule('/', 'index', index)
-    app.add_url_rule('/payment_success', 'payment_success', payment_success)
-    app.add_url_rule('/payment_cancel', 'payment_cancel', payment_cancel)
-    app.add_url_rule('/upload', 'upload_file', upload_file, methods=['POST'])
-    app.add_url_rule('/process_pdf', 'process_pdf', process_pdf, methods=['POST'])
-    app.add_url_rule('/download/<filename>', 'download_file', download_file)
-    app.add_url_rule('/settings', 'settings', settings, methods=['GET'])
-    app.add_url_rule('/settings/save', 'save_settings', save_settings, methods=['POST'])
-    app.add_url_rule('/settings/test_connection', 'test_connection', test_connection, methods=['POST'])
-    app.add_url_rule('/settings/export', 'export_settings', export_settings)
-    app.add_url_rule('/settings/import', 'import_settings', import_settings, methods=['POST'])
-    app.add_url_rule('/history', 'history', history)
-    app.add_url_rule('/history/<filename>', 'history_detail', history_detail)
-    app.add_url_rule('/history/delete', 'delete_history', delete_history, methods=['POST'])
-    app.add_url_rule('/generate_payment_link', 'generate_payment_link', generate_payment_link, methods=['POST'])
-
-    # インタラクティブ修正機能のルートを設定
-    # グローバル変数が定義されているか確認
-    interactive_available = False
-    try:
-        # interactive_correctionモジュールが存在するか確認
-        from interactive_correction import interactive_correction
-        interactive_available = True
-        logger.info("インタラクティブ修正機能が利用可能です")
-    except ImportError:
-        logger.warning("インタラクティブ修正機能は利用できません")
-        interactive_available = False
-        
-    if interactive_available:
-        try:
-            # 独自のルートを追加
-            app.add_url_rule('/correction', 'correction', correction)
-            app.add_url_rule('/api/save_correction', 'api_save_correction', api_save_correction, methods=['POST'])
-            app.add_url_rule('/api/get_suggestions', 'api_get_suggestions', api_get_suggestions, methods=['GET'])
-            
-            # ディレクトリ作成
-            history_dir = os.path.join(os.path.dirname(__file__), 'data', 'correction_history')
-            data_dir = os.path.join(os.path.dirname(__file__), 'data', 'learning_data')
-            os.makedirs(history_dir, exist_ok=True)
-            os.makedirs(data_dir, exist_ok=True)
-            
-            logger.info("インタラクティブ修正機能のルートを設定しました")
-        except Exception as e:
-            logger.error(f"インタラクティブ修正機能のルート設定エラー: {str(e)}")
-
-    return app
+# 重複するcreate_app関数を削除しました
 
 from flask import current_app
 
@@ -3807,7 +3690,24 @@ def api_health_check():
     }), 200
 
 # Gunicorn用のアプリケーションオブジェクト
-application = create_app()
+try:
+    application = create_app()
+    print("Application created successfully")
+except Exception as e:
+    print(f"Error creating application: {e}")
+    import traceback
+    traceback.print_exc()
+    # 最小限のFlaskアプリケーションを作成
+    from flask import Flask
+    application = Flask(__name__)
+    
+    @application.route('/health')
+    def health():
+        return {'status': 'error', 'message': 'Application failed to initialize properly'}
+    
+    @application.route('/')
+    def root():
+        return {'status': 'error', 'message': 'Application failed to initialize properly'}
 
 # アプリ実行（開発環境用）
 if __name__ == '__main__':
