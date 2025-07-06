@@ -437,6 +437,16 @@ if FLASK_LOGIN_AVAILABLE and AUTH_INIT_AVAILABLE:
     try:
         login_manager = init_login_manager(app)
         app.logger.info("Flask-Loginを初期化しました")
+        
+        # before_requestハンドラを追加してセッションとFlask-Loginを同期
+        @app.before_request
+        def sync_authentication():
+            """すべてのリクエスト前にセッションとFlask-Loginの状態を同期"""
+            try:
+                sync_session_with_user()
+            except Exception as e:
+                app.logger.error(f"認証状態同期エラー: {str(e)}")
+        
     except Exception as e:
         app.logger.error(f"Flask-Loginの初期化に失敗: {e}")
         login_manager = None

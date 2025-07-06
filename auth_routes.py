@@ -115,11 +115,20 @@ def login():
             # Flask-Loginを使用してログイン
             if FLASK_LOGIN_AVAILABLE:
                 try:
-                    # Userオブジェクトを作成してログイン
-                    from auth_init import User
-                    user_obj = User(user['id'], user['username'], user['is_admin'], user.get('is_paid_member', False))
-                    login_user(user_obj, remember=form.remember.data)
-                    logger.info(f"Flask-Loginでユーザー '{username}' をログインしました")
+                    # データベースからUserオブジェクトを取得してログイン
+                    import database
+                    user_obj = database.get_user_by_id(user['id'])
+                    if user_obj:
+                        login_user(user_obj, remember=form.remember.data)
+                        logger.info(f"Flask-Loginでユーザー '{username}' をログインしました")
+                        # セッションと Flask-Login の状態を同期
+                        try:
+                            from auth_init import sync_session_with_user
+                            sync_session_with_user()
+                        except Exception as sync_e:
+                            logger.warning(f"セッション同期エラー: {sync_e}")
+                    else:
+                        logger.error(f"ユーザーID {user['id']} のUserオブジェクトを取得できませんでした")
                 except Exception as e:
                     logger.error(f"Flask-Loginログインエラー: {e}")
             
