@@ -392,6 +392,17 @@ app.config['SESSION_COOKIE_DOMAIN'] = None  # ローカル開発環境用
 if os.environ.get('RENDER', 'false').lower() == 'true' or os.environ.get('USE_TEMP_DIR', 'false').lower() == 'true':
     app.config['SESSION_FILE_DIR'] = tempfile.gettempdir()
     app.logger.info(f"Render環境または一時ディレクトリ指定のため、セッションディレクトリを一時ディレクトリに設定: {app.config['SESSION_FILE_DIR']}")
+
+# RESULTS_FOLDER を初期化時に設定
+base_dir = os.path.dirname(os.path.abspath(__file__))
+app.config['RESULTS_FOLDER'] = os.path.join(base_dir, 'results')
+app.config['UPLOAD_FOLDER'] = os.path.join(base_dir, 'uploads')
+
+# 必要なディレクトリを作成
+for folder_path in [app.config['RESULTS_FOLDER'], app.config['UPLOAD_FOLDER']]:
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+        app.logger.info(f"ディレクトリを作成しました: {folder_path}")
 else:
     # 通常の環境ではアプリケーションディレクトリ内のflask_sessionを使用
     app.config['SESSION_FILE_DIR'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'flask_session')
@@ -2572,6 +2583,7 @@ def create_paypal_payment_link(amount, customer, request=None):
 # payment_status_checkerは上部で安全にインポート済み
 
 # 選択された金額で決済リンクを生成するAPI
+@app.route('/generate_payment_link', methods=['POST'])
 @app.route('/api/generate_payment_link', methods=['POST'])
 def generate_payment_link():
     """選択された金額で決済リンクを生成するAPI"""
