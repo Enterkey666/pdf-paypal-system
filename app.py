@@ -789,6 +789,8 @@ def get_config():
                     config = {
                         'client_id': db_settings.get('client_id', ''),
                         'client_secret': db_settings.get('client_secret', ''),
+                        'paypal_client_id': db_settings.get('client_id', ''),  # 両方のキー形式をサポート
+                        'paypal_client_secret': db_settings.get('client_secret', ''),
                         'paypal_mode': db_settings.get('mode', 'sandbox'),
                         'admin_email': env_admin_email,  # メールは環境変数から
                         'currency': db_settings.get('currency', 'JPY')
@@ -808,6 +810,8 @@ def get_config():
         config = {
             'client_id': env_client_id,
             'client_secret': env_client_secret,
+            'paypal_client_id': env_client_id,  # 両方のキー形式をサポート
+            'paypal_client_secret': env_client_secret,
             'paypal_mode': env_paypal_mode,
             'admin_email': env_admin_email,
             'currency': env_currency
@@ -2505,6 +2509,14 @@ def create_paypal_payment_link(amount, customer, request=None):
     # デバッグ情報をログに記録
     logger.info(f"設定読み込み結果: client_id存在={bool(client_id)}, client_secret存在={bool(client_secret)}")
     logger.info(f"利用可能な設定キー: {list(config.keys())}")
+    logger.info(f"環境変数確認: PAYPAL_CLIENT_ID={bool(os.environ.get('PAYPAL_CLIENT_ID'))}, PAYPAL_CLIENT_SECRET={bool(os.environ.get('PAYPAL_CLIENT_SECRET'))}")
+    
+    # 設定の詳細をデバッグ出力
+    for key, value in config.items():
+        if 'secret' in key.lower() or 'password' in key.lower():
+            logger.info(f"設定 {key}: {'***設定済み***' if value else '未設定'}")
+        else:
+            logger.info(f"設定 {key}: {value}")
     
     if not client_id or not client_secret:
         logger.warning("PayPal Client IDまたはClient Secretが設定されていません")
@@ -3196,8 +3208,31 @@ def save_settings():
         os.environ['PAYPAL_MODE'] = paypal_mode
         os.environ['ADMIN_EMAIL'] = admin_email
         
-        # 設定を保存
+        # 設定をファイルに保存
         save_config(config)
+        
+        # 設定をデータベースにも保存（管理者ユーザーの設定として）
+        try:
+            import database
+            admin_user = database.get_user_by_username('admin')
+            if admin_user:
+                admin_id = admin_user['id']
+                # PayPal設定をデータベースに保存
+                paypal_settings = {
+                    'client_id': client_id,
+                    'client_secret': client_secret,
+                    'mode': paypal_mode,
+                    'currency': config.get('currency', 'JPY')
+                }
+                success = database.save_paypal_settings(admin_id, paypal_settings)
+                if success:
+                    logger.info("PayPal設定をデータベースに保存しました")
+                else:
+                    logger.error("データベースへのPayPal設定保存に失敗")
+            else:
+                logger.error("管理者ユーザーが見つかりません")
+        except Exception as db_err:
+            logger.error(f"データベース保存エラー: {str(db_err)}")
         
         flash('設定が保存されました', 'success')
         logger.info("設定が正常に保存されました")
