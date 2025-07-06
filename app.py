@@ -1950,32 +1950,49 @@ def export_batch_pdf(filename):
 
 # 設定ページ
 @app.route('/settings')
+@admin_required
 def settings():
     # 
-#     設定ページ - sandboxモードでは誰でもアクセス可能、本番モードでは有料会員または管理者のみ
+#     設定ページ - 管理者のみアクセス可能
 #     管理者はすべての設定を閲覧・編集可能
-#     ゲストユーザーはsandboxモードの設定のみ閲覧・編集可能
     
     logger.info("設定ページにアクセスされました")
     
-    # セッション情報をログ出力
+    # セッションとFlask-Loginの状態を同期
+    if AUTH_INIT_AVAILABLE:
+        try:
+            sync_session_with_user()
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
+    
+    # セッション情報とcurrent_user情報をログ出力
     logger.info(f"設定ページ表示時のセッション状態: {session}")
+    if FLASK_LOGIN_AVAILABLE and current_user:
+        logger.info(f"設定ページ表示時のcurrent_user状態: authenticated={current_user.is_authenticated}, admin={getattr(current_user, 'is_admin', False)}")
     
     # 現在の設定を取得
     config = get_config()
     
     # PayPalモードを取得（デフォルトはsandbox）
     paypal_mode = config.get('paypal_mode', 'sandbox')
-    is_admin = session.get('admin_logged_in', False)
-    is_paid_member = session.get('is_paid_member', False)
+    
+    # 権限情報を取得（Flask-Loginとセッションの両方をチェック）
+    is_admin = False
+    is_paid_member = False
+    
+    # Flask-Loginからの権限情報
+    if FLASK_LOGIN_AVAILABLE and current_user and current_user.is_authenticated:
+        is_admin = getattr(current_user, 'is_admin', False)
+        is_paid_member = getattr(current_user, 'is_paid_member', False)
+    
+    # セッションからの権限情報（フォールバック）
+    if not is_admin:
+        is_admin = session.get('admin_logged_in', False)
+    if not is_paid_member:
+        is_paid_member = session.get('is_paid_member', False)
     
     # 権限情報をログ出力
     logger.info(f"設定ページ表示時の権限情報 - is_admin: {is_admin}, is_paid_member: {is_paid_member}")
-    
-    # 本番モードで非管理者かつ非有料会員の場合はアクセス制限
-    if paypal_mode == 'live' and not (is_admin or is_paid_member):
-        flash('本番環境の設定ページは管理者または有料会員のみアクセス可能です', 'warning')
-        return redirect(url_for('index'))
     
     # PayPal API接続状態をテスト
     paypal_status = False
@@ -2475,8 +2492,14 @@ def create_paypal_payment_link(amount, customer, request=None):
     client_id = config.get('paypal_client_id', '')
     client_secret = config.get('paypal_client_secret', '')
     
+    # デバッグ情報をログに記録
+    logger.info(f"設定読み込み結果: client_id存在={bool(client_id)}, client_secret存在={bool(client_secret)}")
+    logger.info(f"利用可能な設定キー: {list(config.keys())}")
+    
     if not client_id or not client_secret:
         logger.warning("PayPal Client IDまたはClient Secretが設定されていません")
+        logger.warning(f"client_id: {'***設定済み***' if client_id else '未設定'}")
+        logger.warning(f"client_secret: {'***設定済み***' if client_secret else '未設定'}")
         return ''
     
     # 金額のフォーマットを整理
@@ -2747,6 +2770,18 @@ def generate_payment_link():
         
         logger.info(f"決済リンク生成リクエスト: 顧客名={customer}, 金額={amount}, ファイル名={filename}")
         
+        # PayPal設定の事前チェック
+        config = get_config()
+        client_id = config.get('paypal_client_id', '')
+        client_secret = config.get('paypal_client_secret', '')
+        
+        if not client_id or not client_secret:
+            logger.error("PayPal認証情報が設定されていません")
+            return jsonify({
+                'success': False,
+                'error': 'PayPal認証情報が設定されていません。設定ページでPayPal Client IDとClient Secretを設定してください。'
+            }), 400
+        
         # create_paypal_payment_link関数を使用して決済リンクを生成
         payment_link = create_paypal_payment_link(amount, customer, request)
         
@@ -2759,7 +2794,7 @@ def generate_payment_link():
             logger.error("決済リンクの生成に失敗しました")
             return jsonify({
                 'success': False,
-                'error': '決済リンクの生成に失敗しました'
+                'error': '決済リンクの生成に失敗しました。PayPal設定とネットワーク接続を確認してください。'
             }), 500
     except Exception as e:
         logger.error(f"PayPal決済リンク生成エラー: {str(e)}")
@@ -3099,14 +3134,21 @@ def process_pdf():
 
 # 設定の保存
 @app.route('/settings/save', methods=['POST'])
+@admin_required
 def save_settings():
     # 設定を保存する
 #     
 #     フォームから送信された設定をJSONファイルに保存する
-#     管理者はすべての設定を変更可能
-#     ゲストユーザーはsandboxモードのみ変更可能
+#     管理者のみ設定を変更可能
     
     logger.info("設定保存リクエストを受信")
+    
+    # セッションとFlask-Loginの状態を同期
+    if AUTH_INIT_AVAILABLE:
+        try:
+            sync_session_with_user()
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
     
     try:
         # フォームデータを取得
@@ -3118,30 +3160,31 @@ def save_settings():
         # 現在の設定を取得
         config = get_config()
         
-        # 管理者権限チェック
-        is_admin = session.get('admin_logged_in', False)
+        # 権限情報を取得（Flask-Loginとセッションの両方をチェック）
+        is_admin = False
         
-        # 本番モードへの変更は管理者のみ許可
-        if paypal_mode == 'live' and not is_admin:
-            flash('本番環境の設定変更は管理者のみ許可されています', 'warning')
+        # Flask-Loginからの権限情報
+        if FLASK_LOGIN_AVAILABLE and current_user and current_user.is_authenticated:
+            is_admin = getattr(current_user, 'is_admin', False)
+        
+        # セッションからの権限情報（フォールバック）
+        if not is_admin:
+            is_admin = session.get('admin_logged_in', False)
+        
+        # 管理者権限の確認（デコレータで既にチェック済みだが念のため）
+        if not is_admin:
+            flash('設定の変更は管理者のみ許可されています', 'warning')
             return redirect(url_for('settings'))
         
-        # 管理者の場合はすべての設定を更新
-        if is_admin:
-            config['client_id'] = client_id
-            config['client_secret'] = client_secret
-            config['paypal_mode'] = paypal_mode
-            config['admin_email'] = admin_email
-            
-            # 環境変数にも反映
-            os.environ['PAYPAL_MODE'] = paypal_mode
-            os.environ['ADMIN_EMAIL'] = admin_email
-        # ゲストの場合はsandboxモードの設定のみ更新
-        else:
-            # 現在のモードを維持（sandboxのみ許可）
-            config['client_id'] = client_id
-            config['client_secret'] = client_secret
-            # paypal_modeは変更しない（sandboxのまま）
+        # 設定を更新
+        config['client_id'] = client_id
+        config['client_secret'] = client_secret
+        config['paypal_mode'] = paypal_mode
+        config['admin_email'] = admin_email
+        
+        # 環境変数にも反映
+        os.environ['PAYPAL_MODE'] = paypal_mode
+        os.environ['ADMIN_EMAIL'] = admin_email
         
         # 設定を保存
         save_config(config)
@@ -3158,6 +3201,7 @@ def save_settings():
 
 # 接続テスト
 @app.route('/settings/test_connection', methods=['POST'])
+@admin_required
 def test_connection():
     # 接続テストを行う
 #     
@@ -3165,6 +3209,13 @@ def test_connection():
 #     JSONリクエストとフォームデータの両方に対応
     
     logger.info("接続テストリクエストを受信")
+    
+    # セッションとFlask-Loginの状態を同期
+    if AUTH_INIT_AVAILABLE:
+        try:
+            sync_session_with_user()
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
     
     try:
         # JSONリクエストとフォームデータの両方に対応
@@ -3205,26 +3256,25 @@ def test_connection():
 
 # 設定のエクスポート
 @app.route('/settings/export', methods=['GET'])
+@admin_required
 def export_settings():
     # 設定をJSONファイルとしてエクスポートする
 #     
 #     現在の設定をJSONファイルとしてダウンロード可能にする
-#     管理者はすべての設定をエクスポート可能
-#     ゲストユーザーはsandboxモードのみエクスポート可能
+#     管理者のみ設定をエクスポート可能
     
     logger.info("設定エクスポートリクエストを受信")
+    
+    # セッションとFlask-Loginの状態を同期
+    if AUTH_INIT_AVAILABLE:
+        try:
+            sync_session_with_user()
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
     
     try:
         # 現在の設定を取得
         config = get_config()
-        
-        # 管理者権限チェック
-        is_admin = session.get('admin_logged_in', False)
-        
-        # 本番モード設定へのアクセス制限
-        if not is_admin and config.get('paypal_mode', 'sandbox') == 'live':
-            flash('本番環境の設定エクスポートは管理者のみ許可されています', 'warning')
-            return redirect(url_for('settings'))
         
         # 機密情報をマスク
         if 'client_secret' in config:
@@ -3249,27 +3299,41 @@ def export_settings():
 
 # 設定のインポート
 @app.route('/settings/import', methods=['POST'])
+@admin_required
 def import_settings():
     # 設定をJSONファイルからインポートする
 #     
 #     アップロードされたJSONファイルから設定をインポートする
-#     管理者はすべての設定をインポート可能
-#     ゲストユーザーはsandboxモードのみインポート可能
+#     管理者のみ設定をインポート可能
     
     logger.info("設定インポートリクエストを受信")
     
+    # セッションとFlask-Loginの状態を同期
+    if AUTH_INIT_AVAILABLE:
+        try:
+            sync_session_with_user()
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
+    
     try:
-        # 管理者権限チェック
-        is_admin = session.get('admin_logged_in', False)
+        # 権限情報を取得（Flask-Loginとセッションの両方をチェック）
+        is_admin = False
+        
+        # Flask-Loginからの権限情報
+        if FLASK_LOGIN_AVAILABLE and current_user and current_user.is_authenticated:
+            is_admin = getattr(current_user, 'is_admin', False)
+        
+        # セッションからの権限情報（フォールバック）
+        if not is_admin:
+            is_admin = session.get('admin_logged_in', False)
+        
+        # 管理者権限の確認（デコレータで既にチェック済みだが念のため）
+        if not is_admin:
+            flash('設定のインポートは管理者のみ許可されています', 'warning')
+            return redirect(url_for('settings'))
         
         # 現在の設定を取得
         current_config = get_config()
-        current_mode = current_config.get('paypal_mode', 'sandbox')
-        
-        # 本番モード設定へのアクセス制限
-        if not is_admin and current_mode == 'live':
-            flash('本番環境の設定インポートは管理者のみ許可されています', 'warning')
-            return redirect(url_for('settings'))
         
         # ファイルがアップロードされているか確認
         if 'file' not in request.files:
@@ -3299,17 +3363,8 @@ def import_settings():
                 flash(f'インポートされた設定に必須キー {key} が含まれていません', 'error')
                 return redirect(url_for('settings'))
         
-        # 非管理者がliveモードの設定をインポートしようとしている場合は拒否
-        if not is_admin and imported_config.get('paypal_mode') == 'live':
-            flash('本番環境の設定インポートは管理者のみ許可されています', 'warning')
-            return redirect(url_for('settings'))
-        
         # 設定をマージ
         for key, value in imported_config.items():
-            # 非管理者の場合、paypal_modeはsandboxのままにする
-            if key == 'paypal_mode' and not is_admin:
-                continue
-                
             # client_secretが'********'の場合は更新しない
             if key == 'client_secret' and value == '********':
                 continue
