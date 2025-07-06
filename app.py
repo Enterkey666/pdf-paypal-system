@@ -287,20 +287,45 @@ except ImportError as e:
     Session = DummySession
 # Flask-Login の安全なインポート
 try:
-    from flask_login import LoginManager, current_user, login_required
+    from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
     FLASK_LOGIN_AVAILABLE = True
     print("✓ flask_login インポート成功")
 except ImportError as e:
     print(f"⚠ flask_login インポート失敗: {e}")
     FLASK_LOGIN_AVAILABLE = False
-    # フォールバック用のダミー関数を定義
+    # フォールバック用のダミークラスを定義
     class DummyLoginManager:
+        def __init__(self, *args, **kwargs): pass
         def init_app(self, app): pass
-        def user_loader(self, func): return func
+        def user_loader(self, callback): return callback
+    class UserMixin:
+        @property
+        def is_authenticated(self): return False
+        @property
+        def is_active(self): return False
+        @property
+        def is_anonymous(self): return True
+        def get_id(self): return None
+    def login_user(user, remember=False): return False
+    def logout_user(): return None
     LoginManager = DummyLoginManager
     current_user = None
     def login_required(f):
         return f  # 認証なしで通す
+
+# 認証初期化モジュールのインポート（安全なインポート）
+try:
+    from auth_init import init_login_manager, sync_session_with_user
+    AUTH_INIT_AVAILABLE = True
+    print("✓ auth_init モジュール インポート成功")
+except ImportError as e:
+    print(f"⚠ auth_init モジュール インポート失敗: {e}")
+    AUTH_INIT_AVAILABLE = False
+    # フォールバック関数を定義
+    def init_login_manager(app):
+        return None
+    def sync_session_with_user():
+        pass
 # WTForms の安全なインポート
 try:
     from wtforms import StringField, PasswordField, SubmitField
@@ -397,6 +422,27 @@ if os.environ.get('RENDER', 'false').lower() == 'true' or os.environ.get('USE_TE
 base_dir = os.path.dirname(os.path.abspath(__file__))
 app.config['RESULTS_FOLDER'] = os.path.join(base_dir, 'results')
 app.config['UPLOAD_FOLDER'] = os.path.join(base_dir, 'uploads')
+
+# 結果フォルダとアップロードフォルダが存在することを確認
+for folder in [app.config['RESULTS_FOLDER'], app.config['UPLOAD_FOLDER']]:
+    if not os.path.exists(folder):
+        try:
+            os.makedirs(folder)
+            app.logger.info(f"フォルダを作成しました: {folder}")
+        except Exception as e:
+            app.logger.error(f"フォルダの作成に失敗: {folder}, エラー: {e}")
+
+# Flask-Loginの初期化
+if FLASK_LOGIN_AVAILABLE and AUTH_INIT_AVAILABLE:
+    try:
+        login_manager = init_login_manager(app)
+        app.logger.info("Flask-Loginを初期化しました")
+    except Exception as e:
+        app.logger.error(f"Flask-Loginの初期化に失敗: {e}")
+        login_manager = None
+else:
+    app.logger.warning("Flask-Loginまたは認証初期化モジュールが利用できないため、認証機能は制限されます")
+    login_manager = None
 
 # 必要なディレクトリを作成
 for folder_path in [app.config['RESULTS_FOLDER'], app.config['UPLOAD_FOLDER']]:
@@ -535,73 +581,71 @@ def admin_required(f):
             flash('このページにアクセスするには管理者権限が必要です', 'error')
             return redirect(url_for('auth.login', next=request.url))
         return f(*args, **kwargs)
+        
+        # セッション情報をログ出力
+        logger.debug(f"admin_required: session={session}, current_user.is_admin={getattr(current_user, 'is_admin', None) if current_user else None}")
+        
+        # 管理者かどうかチェック
+        if current_user and hasattr(current_user, 'is_admin') and current_user.is_admin:
+            return f(*args, **kwargs)
+        
+        # セッションに管理者フラグがある場合
+        if session.get('admin_logged_in'):
+            return f(*args, **kwargs)
+        
+        # APIリクエストの場合はエラーレスポンスを返す
+        if request.path.startswith('/api/'):
+            return jsonify({
+                'error': '管理者権限が必要です',
+                'status': 'error'
+            }), 403
+        
+        # それ以外の場合はログインページにリダイレクト
+        flash('管理者権限が必要です', 'warning')
+        return redirect(url_for('auth.login', next=request.url))
+    
     return decorated_function
 
 # 有料会員または管理者認証用デコレータ
 def paid_member_or_admin_required(f):
     # 
-#     有料会員または管理者権限が必要なルートに対するデコレータ
-#     本番モードでは有料会員または管理者のみアクセス可能
-#     sandboxモードでは誰でもアクセス可能
+#     有料会員または管理者権限が必要なルート用のデコレータ
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # PayPalモードを取得（デフォルトはsandbox）
-        paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
+        # セッションとFlask-Loginの状態を同期
+        if AUTH_INIT_AVAILABLE:
+            sync_session_with_user()
         
-        # sandboxモードの場合は誰でもアクセス可能
-        if paypal_mode.lower() == 'sandbox':
-            logger.info("Sandboxモードなので誰でもアクセス可能")
+        # セッション情報をログ出力
+        logger.debug(f"paid_member_or_admin_required: session={session}, current_user={current_user}")
+        
+        # 管理者かどうかチェック
+        if current_user and hasattr(current_user, 'is_admin') and current_user.is_admin:
             return f(*args, **kwargs)
         
-        # 本番モードの場合は有料会員または管理者のみアクセス可能
-        if current_user.is_authenticated and (current_user.is_admin or current_user.is_paid_member):
-            logger.info("有料会員または管理者としてアクセス")
+        # セッションに管理者フラグがある場合
+        if session.get('admin_logged_in'):
             return f(*args, **kwargs)
         
-        # それ以外の場合は有料会員登録ページにリダイレクト
-        flash('この機能を利用するには有料会員登録が必要です', 'error')
-        return redirect(url_for('membership_info'))
-    
-    return decorated_function
-
-# 外部API使用権限チェック用デコレータ
-def api_access_required(f):
-    # 
-#     外部API（Google、Azul、PayPal本番）の使用権限が必要なルートに対するデコレータ
-#     sandboxモードでは誰でもアクセス可能
-#     本番モードでは有料会員または管理者のみアクセス可能
-    
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # 現在の設定からPayPalモードを取得
-        config = get_config()
-        paypal_mode = config.get('paypal_mode', 'sandbox')
-        
-        logger.info(f"APIアクセス権限チェック - モード: {paypal_mode}")
-        logger.info(f"APIアクセス権限チェック - セッション: {session}")
-        
-        # sandboxモードの場合は誰でもアクセス可能
-        if paypal_mode.lower() == 'sandbox':
-            logger.info("Sandboxモードなので誰でも外部APIにアクセス可能")
+        # 有料会員かどうかチェック
+        if current_user and hasattr(current_user, 'is_paid_member') and current_user.is_paid_member:
             return f(*args, **kwargs)
         
-        # 本番モードの場合は有料会員または管理者のみアクセス可能
-        if session.get('admin_logged_in') or session.get('is_paid_member'):
-            logger.info("有料会員または管理者として外部APIにアクセス")
+        # セッションに有料会員フラグがある場合
+        if session.get('is_paid_member'):
             return f(*args, **kwargs)
         
-        # JSONリクエストの場合はJSONレスポンスを返す
-        if request.is_json:
-            logger.warning("権限がないJSONリクエストを拒否")
+        # APIリクエストの場合はエラーレスポンスを返す
+        if request.path.startswith('/api/'):
             return jsonify({
-                'error': '外部APIを使用するには有料会員または管理者権限が必要です',
-                'status': 'unauthorized'
+                'error': '有料会員または管理者権限が必要です',
+                'status': 'error'
             }), 403
         
-        # それ以外の場合はエラーレスポンスを返す
-        flash('外部APIを使用するには有料会員登録が必要です', 'error')
-        return redirect(url_for('membership_info'))
+        # それ以外の場合はログインページにリダイレクト
+        flash('有料会員または管理者権限が必要です', 'warning')
+        return redirect(url_for('auth.login', next=request.url))
     
     return decorated_function
 
@@ -619,6 +663,59 @@ def basic_auth_required(f):
         if not auth or auth.username != admin_username or auth.password != admin_password:
             return jsonify({'error': '認証が必要です'}), 401, {'WWW-Authenticate': 'Basic realm="Login Required"'}
         return f(*args, **kwargs)
+    return decorated_function
+
+# 外部API使用権限チェック用デコレータ
+def api_access_required(f):
+    # 
+#     外部API（Google、Azul、PayPal本番）の使用権限が必要なルートに対するデコレータ
+#     sandboxモードでは誰でもアクセス可能
+#     本番モードでは有料会員または管理者のみアクセス可能
+    
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # セッションとFlask-Loginの状態を同期
+        if AUTH_INIT_AVAILABLE:
+            sync_session_with_user()
+            
+        # 現在の設定からPayPalモードを取得
+        config = get_config()
+        paypal_mode = config.get('paypal_mode', 'sandbox')
+        
+        logger.info(f"APIアクセス権限チェック - モード: {paypal_mode}")
+        logger.info(f"APIアクセス権限チェック - セッション: {session}")
+        
+        # sandboxモードの場合は誰でもアクセス可能
+        if paypal_mode.lower() == 'sandbox':
+            logger.info("Sandboxモードなので誰でも外部APIにアクセス可能")
+            return f(*args, **kwargs)
+        
+        # 本番モードの場合は有料会員または管理者のみアクセス可能
+        if current_user and hasattr(current_user, 'is_admin') and current_user.is_admin:
+            logger.info("管理者として外部APIにアクセス")
+            return f(*args, **kwargs)
+            
+        if current_user and hasattr(current_user, 'is_paid_member') and current_user.is_paid_member:
+            logger.info("有料会員として外部APIにアクセス")
+            return f(*args, **kwargs)
+        
+        # セッションでのチェック
+        if session.get('admin_logged_in') or session.get('is_paid_member'):
+            logger.info("セッション情報から有料会員または管理者として外部APIにアクセス")
+            return f(*args, **kwargs)
+        
+        # JSONリクエストの場合はJSONレスポンスを返す
+        if request.is_json:
+            logger.warning("権限がないJSONリクエストを拒否")
+            return jsonify({
+                'error': '外部APIを使用するには有料会員または管理者権限が必要です',
+                'status': 'unauthorized'
+            }), 403
+        
+        # それ以外の場合はエラーレスポンスを返す
+        flash('外部APIを使用するには有料会員登録が必要です', 'error')
+        return redirect(url_for('membership_info'))
+    
     return decorated_function
 
 # アプリケーション起動時にキャッシュをクリアし、モジュールを再読み込み
@@ -642,8 +739,11 @@ def get_config_path():
 def get_config():
     # 設定を読み込む
 #     
-#     設定ファイルから設定を読み込み、返す
-#     ファイルが存在しない場合はデフォルト設定を返す
+#     優先順位:
+#     1. データベースから設定を読み込む（管理者ユーザーの設定）
+#     2. 環境変数から設定を取得
+#     3. 設定ファイルから設定を読み込む
+#     4. デフォルト設定を返す
     
     config_path = get_config_path()
     
@@ -652,38 +752,84 @@ def get_config():
         'client_id': '',
         'client_secret': '',
         'paypal_mode': 'sandbox',
-        'admin_email': ''
+        'admin_email': '',
+        'currency': 'JPY'
     }
     
     # 環境変数から設定を取得
-    paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
-    admin_email = os.environ.get('ADMIN_EMAIL', '')
+    env_client_id = os.environ.get('PAYPAL_CLIENT_ID', '')
+    env_client_secret = os.environ.get('PAYPAL_CLIENT_SECRET', '')
+    env_paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
+    env_admin_email = os.environ.get('ADMIN_EMAIL', '')
+    env_currency = os.environ.get('PAYPAL_CURRENCY', 'JPY')
     
-    # ファイルが存在する場合は読み込み
+    # 1. まず、データベースから管理者の設定を取得
+    try:
+        # データベースモジュールが利用可能か確認
+        if 'database' in sys.modules:
+            import database
+            # 管理者ユーザーを検索
+            admin_user = database.get_user_by_username('admin')
+            if admin_user:
+                admin_id = admin_user['id']
+                # 管理者のPayPal設定を取得
+                db_settings = database.get_paypal_settings(admin_id)
+                if db_settings:
+                    logger.info("データベースから管理者のPayPal設定を読み込みました")
+                    config = {
+                        'client_id': db_settings.get('client_id', ''),
+                        'client_secret': db_settings.get('client_secret', ''),
+                        'paypal_mode': db_settings.get('mode', 'sandbox'),
+                        'admin_email': env_admin_email,  # メールは環境変数から
+                        'currency': db_settings.get('currency', 'JPY')
+                    }
+                    
+                    # 環境変数の値で必要に応じて上書き
+                    if env_paypal_mode:
+                        config['paypal_mode'] = env_paypal_mode
+                    
+                    return config
+    except Exception as e:
+        logger.error(f"データベースからの設定読み込みエラー: {str(e)}")
+    
+    # 2. 環境変数から設定を構築
+    if env_client_id and env_client_secret:
+        logger.info("環境変数からPayPal設定を読み込みました")
+        config = {
+            'client_id': env_client_id,
+            'client_secret': env_client_secret,
+            'paypal_mode': env_paypal_mode,
+            'admin_email': env_admin_email,
+            'currency': env_currency
+        }
+        return config
+    
+    # 3. ファイルが存在する場合は読み込み
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
+            logger.info("設定ファイルからPayPal設定を読み込みました")
+            
             # 環境変数の値で上書き
-            config['paypal_mode'] = paypal_mode
-            config['admin_email'] = admin_email
+            if env_paypal_mode:
+                config['paypal_mode'] = env_paypal_mode
+            if env_admin_email:
+                config['admin_email'] = env_admin_email
+            if 'currency' not in config:
+                config['currency'] = env_currency
             
             return config
         except Exception as e:
             logger.error(f"設定ファイルの読み込みエラー: {str(e)}")
-            
-            # 環境変数の値でデフォルト設定を更新
-            default_config['paypal_mode'] = paypal_mode
-            default_config['admin_email'] = admin_email
-            
-            return default_config
-    else:
-        # 環境変数の値でデフォルト設定を更新
-        default_config['paypal_mode'] = paypal_mode
-        default_config['admin_email'] = admin_email
-        
-        return default_config
+    
+    # 4. デフォルト設定を返す
+    logger.warning("設定が見つからないため、デフォルト設定を使用します")
+    default_config['paypal_mode'] = env_paypal_mode
+    default_config['admin_email'] = env_admin_email
+    
+    return default_config
 
 # 設定の保存
 def save_config(config):

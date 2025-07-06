@@ -14,6 +14,20 @@ from wtforms import StringField, PasswordField, SubmitField, BooleanField, Selec
 from wtforms.validators import DataRequired, Length, EqualTo, ValidationError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+# Flask-Login
+try:
+    from flask_login import login_user, logout_user, login_required, current_user
+    FLASK_LOGIN_AVAILABLE = True
+    print("✓ auth_routes: flask_login インポート成功")
+except ImportError as e:
+    print(f"⚠ auth_routes: flask_login インポート失敗: {e}")
+    FLASK_LOGIN_AVAILABLE = False
+    # フォールバック用のダミー関数を定義
+    def login_user(user, remember=False): return False
+    def logout_user(): return None
+    def login_required(f): return f
+    current_user = None
+
 # データベースモジュールをインポート
 import database
 
@@ -22,6 +36,23 @@ logger = logging.getLogger(__name__)
 
 # Blueprintの作成
 auth_bp = Blueprint('auth', __name__)
+
+# すべてのリクエストの前に実行されるハンドラ
+@auth_bp.before_request
+def sync_user_session():
+    # Flask-Loginとセッションの状態を同期
+    if FLASK_LOGIN_AVAILABLE:
+        try:
+            # auth_initモジュールが利用可能な場合
+            try:
+                from auth_init import sync_session_with_user
+                sync_session_with_user()
+                logger.debug("Flask-Loginとセッションの状態を同期しました")
+            except ImportError:
+                logger.debug("auth_initモジュールがインポートできません")
+        except Exception as e:
+            logger.error(f"セッション同期エラー: {e}")
+
 
 # ログインフォーム
 class LoginForm(FlaskForm):
@@ -56,7 +87,9 @@ class PayPalSettingsForm(FlaskForm):
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
     # 既にログイン済みの場合はトップページにリダイレクト
-    if 'user_id' in session:
+    if FLASK_LOGIN_AVAILABLE and current_user and current_user.is_authenticated:
+        return redirect(url_for('index'))
+    elif 'user_id' in session:
         return redirect(url_for('index'))
     
     form = LoginForm()
@@ -71,12 +104,24 @@ def login():
             session['user_id'] = user['id']
             session['username'] = user['username']
             session['is_admin'] = user['is_admin']
+            session['is_paid_member'] = user.get('is_paid_member', False)
             # admin_logged_inも設定して一貫性を確保
             session['admin_logged_in'] = user['is_admin']
             
             # ログイン状態を保持する場合
             if form.remember.data:
                 session.permanent = True
+            
+            # Flask-Loginを使用してログイン
+            if FLASK_LOGIN_AVAILABLE:
+                try:
+                    # Userオブジェクトを作成してログイン
+                    from auth_init import User
+                    user_obj = User(user['id'], user['username'], user['is_admin'], user.get('is_paid_member', False))
+                    login_user(user_obj, remember=form.remember.data)
+                    logger.info(f"Flask-Loginでユーザー '{username}' をログインしました")
+                except Exception as e:
+                    logger.error(f"Flask-Loginログインエラー: {e}")
             
             logger.info(f"ユーザー '{username}' がログインしました")
             flash(f'ようこそ、{username}さん！', 'success')
@@ -93,17 +138,32 @@ def login():
 # ログアウトルート
 @auth_bp.route('/logout')
 def logout():
-    username = session.get('username', '不明')
+    # セッションからユーザー情報を取得
+    username = session.get('username')
+    
+    # Flask-Loginを使用してログアウト
+    if FLASK_LOGIN_AVAILABLE:
+        try:
+            logout_user()
+            logger.info(f"Flask-Loginでユーザーをログアウトしました")
+        except Exception as e:
+            logger.error(f"Flask-Loginログアウトエラー: {e}")
     
     # セッションからユーザー情報を削除
     session.pop('user_id', None)
     session.pop('username', None)
     session.pop('is_admin', None)
     session.pop('admin_logged_in', None)
+    session.pop('is_paid_member', None)
     
-    logger.info(f"ユーザー '{username}' がログアウトしました")
+    # セッションをクリア
+    session.clear()
+    
+    if username:
+        logger.info(f"ユーザー '{username}' がログアウトしました")
+    
     flash('ログアウトしました', 'info')
-    return redirect(url_for('auth.login'))
+    return redirect(url_for('index'))
 
 # ユーザー登録ルート（管理者のみアクセス可能）
 @auth_bp.route('/register', methods=['GET', 'POST'])
