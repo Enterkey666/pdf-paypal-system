@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, Union, Tuple
 logger = logging.getLogger(__name__)
 
 # 既存のPayPal連携モジュールをインポート
-from paypal_utils import get_paypal_access_token, create_payment_link, create_guest_payment_link
+from paypal_utils import get_paypal_access_token
 import database
 
 def safe_test_paypal_connection(client_id: str = None, client_secret: str = None, 

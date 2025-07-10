@@ -752,21 +752,42 @@ def update_payment_status(order_id, status, payment_id=None, user_id=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # order_idに一致する処理履歴を検索
+        # order_idに一致する処理履歴を検索（複数の方法で検索）
+        history = None
+        
+        # 方法1: paypal_linkに注文IDが含まれているかチェック
         if user_id:
-            # 特定ユーザーの履歴のみ検索
             cursor.execute(
                 "SELECT * FROM processing_history WHERE paypal_link LIKE ? AND user_id = ?",
                 (f"%{order_id}%", user_id)
             )
         else:
-            # 全ユーザーの履歴を検索
             cursor.execute(
                 "SELECT * FROM processing_history WHERE paypal_link LIKE ?",
                 (f"%{order_id}%",)
             )
-        
         history = cursor.fetchone()
+        
+        # 方法2: 見つからない場合は最近の処理履歴を検索（同じ時間帯に処理されたもの）
+        if not history:
+            logger.info(f"PayPalリンクでの検索に失敗、最近の処理履歴から検索します: {order_id}")
+            # 過去1時間以内の処理履歴から、statusがnullまたは空のものを検索
+            one_hour_ago = datetime.now().isoformat()
+            one_hour_ago = datetime.fromisoformat(one_hour_ago.replace('T', ' ')[:19])
+            one_hour_ago = (one_hour_ago.timestamp() - 3600)
+            one_hour_ago_str = datetime.fromtimestamp(one_hour_ago).strftime('%Y-%m-%d %H:%M:%S')
+            
+            if user_id:
+                cursor.execute(
+                    "SELECT * FROM processing_history WHERE user_id = ? AND processed_at > ? AND (status IS NULL OR status = '' OR status NOT LIKE '%COMPLETED%') ORDER BY processed_at DESC LIMIT 1",
+                    (user_id, one_hour_ago_str)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM processing_history WHERE processed_at > ? AND (status IS NULL OR status = '' OR status NOT LIKE '%COMPLETED%') ORDER BY processed_at DESC LIMIT 1",
+                    (one_hour_ago_str,)
+                )
+            history = cursor.fetchone()
         
         if history:
             # ステータス更新

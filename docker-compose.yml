@@ -4,7 +4,7 @@ services:
   pdf-app:
     build: .
     ports:
-      - "5000:5000"
+      - "8080:8080"
     volumes:
       - ./data:/app/data
     environment:

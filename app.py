@@ -65,8 +65,8 @@ except Exception as e:
     TEMPLATE_MATCHING_AVAILABLE = False
     print(f"⚠ template_matching 初期化エラー: {e}")
 try:
-    from google.cloud import firestore
-    from google.cloud.firestore import SERVER_TIMESTAMP
+    from google.cloud import firestore  # type: ignore
+    from google.cloud.firestore import SERVER_TIMESTAMP  # type: ignore
     FIRESTORE_AVAILABLE = True
 except ImportError as e:
     FIRESTORE_AVAILABLE = False
@@ -202,7 +202,7 @@ except ImportError as e:
             "customer_extractor", 
             os.path.join(current_dir, "customer_extractor.py")
         )
-        if spec:
+        if spec and spec.loader:
             ce_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(ce_module)
             customer_extractor = ce_module
@@ -287,7 +287,7 @@ except ImportError as e:
     Session = DummySession
 # Flask-Login の安全なインポート
 try:
-    from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+    from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user  # type: ignore
     FLASK_LOGIN_AVAILABLE = True
     print("✓ flask_login インポート成功")
 except ImportError as e:
@@ -574,10 +574,6 @@ except ImportError as e:
     def update_pending_payment_statuses():
         logger.error("payment_status_updaterモジュールがインポートできないため、支払いステータス更新はスキップされます")
         return 0, 0
-        
-    def update_payment_status_by_order_id(order_id):
-        logger.error("payment_status_updaterモジュールがインポートできないため、支払いステータス更新はスキップされます")
-        return False, None, "モジュールがインポートできません"
 
 # 管理者認証用デコレータ
 def admin_required(f):
@@ -1051,8 +1047,9 @@ except ImportError as e:
             # 直接インポートを試みる
             import importlib.util
             spec = importlib.util.spec_from_file_location("extractors", extractors_path)
-            extractors = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(extractors)
+            if spec and spec.loader:
+                extractors = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(extractors)
             
             # 必要な関数を取得
             extract_amount_only = extractors.extract_amount_only
@@ -1181,22 +1178,26 @@ def extract_text_from_pdf(pdf_path):
         
         # 一時ファイルを作成
         with tempfile.NamedTemporaryFile(suffix=".txt") as temp_file:
-            # pdftotextコマンドを実行
-            process = subprocess.Popen(
-                ["pdftotext", pdf_path, temp_file.name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            _, stderr = process.communicate(timeout=30)
-            
-            if process.returncode != 0:
-                logger.warning(f"pdftotextコマンド実行エラー: {stderr}")
-                raise Exception(f"pdftotextコマンド実行エラー: {stderr}")
-            
-            # 生成されたテキストファイルを読み込む
-            with open(temp_file.name, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
+            try:
+                # pdftotextコマンドを実行
+                process = subprocess.Popen(
+                    ["pdftotext", pdf_path, temp_file.name],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                _, stderr = process.communicate(timeout=30)
+                
+                if process.returncode != 0:
+                    logger.warning(f"pdftotextコマンド実行エラー: {stderr}")
+                    raise Exception(f"pdftotextコマンド実行エラー: {stderr}")
+                
+                # 生成されたテキストファイルを読み込む
+                with open(temp_file.name, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
+            except FileNotFoundError as fnf:
+                logger.warning(f"pdftotextコマンドが見つかりません: {fnf}")
+                raise Exception("pdftotextコマンドが見つかりません。インストールされていないためスキップします。")
         
         if text.strip():
             logger.info(f"pdftotextコマンドでテキスト抽出成功: {len(text)} 文字")
@@ -1510,22 +1511,28 @@ def payment_success():
             # 支払いが実際に完了している場合
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 支払いステータスを更新
+            # 支払いステータスを更新（失敗しても処理を続行）
+            update_message = ""
             try:
                 from payment_status_updater import update_payment_status_by_order_id
                 success, new_status, message = update_payment_status_by_order_id(token)
                 if success:
                     logger.info(f"支払いステータス更新成功: {message}")
+                    update_message = "ステータス更新済み"
                 else:
                     logger.warning(f"支払いステータス更新失敗: {message}")
+                    update_message = "ステータス更新に失敗しましたが、支払いは完了しています"
             except Exception as e:
                 logger.error(f"支払いステータス更新エラー: {str(e)}")
+                update_message = "ステータス更新エラーが発生しましたが、支払いは完了しています"
             
+            # 支払い完了済みの場合は常に成功ページを表示
             return render_template('payment_result.html', 
                                  result="success", 
                                  status="COMPLETED", 
                                  order_id=token,
                                  current_time=current_time,
+                                 message=f"お支払いが完了しました。{update_message}",
                                  is_pdf_export=False)
         elif payment_status == "PENDING":
             # 支払い処理中
@@ -2630,9 +2637,13 @@ def create_paypal_payment_link(amount, customer, request=None):
                     "cancel_url": (request.url_root.rstrip('/') if request else '') + url_for('payment_cancel'),
                     "brand_name": "PDF PayPal System",
                     "locale": "ja-JP",
-                    "landing_page": "BILLING",
+                    "landing_page": "GUEST_CHECKOUT",
                     "shipping_preference": "NO_SHIPPING",
                     "user_action": "PAY_NOW"
+                },
+                "payment_method": {
+                    "payer_selected": "PAYPAL",
+                    "payee_preferred": "UNRESTRICTED"
                 }
             }
             
