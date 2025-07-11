@@ -1539,12 +1539,14 @@
                             fetch('/generate_payment_link', {
                                 method: 'POST',
                                 headers: {
-                                    'Content-Type': 'application/json'
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
                                 },
                                 body: JSON.stringify({
                                     customer: customer,
                                     amount: amount,
-                                    index: index
+                                    index: index,
+                                    csrf_token: document.querySelector('meta[name=csrf-token]').getAttribute('content')
                                 })
                             })
                             .then(response => response.json())
