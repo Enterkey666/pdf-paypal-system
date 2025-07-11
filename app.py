@@ -2810,6 +2810,8 @@ def generate_payment_link():
         
         if not client_id or not client_secret:
             logger.error("PayPal認証情報が設定されていません")
+            logger.error(f"設定確認: client_id存在={bool(client_id)}, client_secret存在={bool(client_secret)}")
+            logger.error(f"設定の内容: {[k for k in config.keys()]}")
             return jsonify({
                 'success': False,
                 'error': 'PayPal認証情報が設定されていません。設定ページでPayPal Client IDとClient Secretを設定してください。'
