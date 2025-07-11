@@ -39,7 +39,7 @@ steps:
       '--timeout', '300',
       '--max-instances', '100',
       '--concurrency', '1000',
-      '--set-env-vars', 'FLASK_DEBUG=false,FLASK_ENV=production,USE_TEMP_DIR=true,GOOGLE_CLOUD=true,SECRET_KEY=5b79ee7c922081eeee7b5b69d7e61014f4396ec953c258750028f95102ef83c4,ENABLE_CSRF_PROTECTION=true,ENABLE_SECURE_HEADERS=true,PAYPAL_MODE=sandbox,DEFAULT_CURRENCY=JPY,SESSION_LIFETIME=30'
+      '--set-env-vars', 'FLASK_DEBUG=false,FLASK_ENV=production,USE_TEMP_DIR=true,GOOGLE_CLOUD=true,SECRET_KEY=5b79ee7c922081eeee7b5b69d7e61014f4396ec953c258750028f95102ef83c4,ENABLE_CSRF_PROTECTION=true,ENABLE_SECURE_HEADERS=true,PAYPAL_MODE=${_PAYPAL_MODE},DEFAULT_CURRENCY=JPY,SESSION_LIFETIME=30,PAYPAL_CLIENT_ID=${_PAYPAL_CLIENT_ID},PAYPAL_CLIENT_SECRET=${_PAYPAL_CLIENT_SECRET}'
     ]
 
 # ビルドのタイムアウト設定
@@ -58,3 +58,6 @@ options:
 substitutions:
   _SERVICE_NAME: 'pdf-paypal-system'
   _REGION: 'asia-northeast1'
+  _PAYPAL_MODE: 'sandbox'  # デフォルトはsandbox
+  _PAYPAL_CLIENT_ID: ''    # デプロイ時に設定する
+  _PAYPAL_CLIENT_SECRET: '' # デプロイ時に設定する

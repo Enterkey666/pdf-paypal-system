@@ -2637,12 +2637,11 @@ def create_paypal_payment_link(amount, customer, request=None):
                     "cancel_url": (request.url_root.rstrip('/') if request else '') + url_for('payment_cancel'),
                     "brand_name": "PDF PayPal System",
                     "locale": "ja-JP",
-                    "landing_page": "GUEST_CHECKOUT",
+                    "landing_page": "BILLING",
                     "shipping_preference": "NO_SHIPPING",
                     "user_action": "PAY_NOW"
                 },
                 "payment_method": {
-                    "payer_selected": "PAYPAL",
                     "payee_preferred": "UNRESTRICTED"
                 }
             }
@@ -2778,6 +2777,7 @@ def create_paypal_payment_link(amount, customer, request=None):
         # 決済リンクを生成
         payment_link = f"{base_url}/cgi-bin/webscr?cmd=_xclick&business={urllib.parse.quote(business_id)}&item_name={urllib.parse.quote(cleaned_customer + '様宛請求書')}&amount={formatted_amount}&currency_code={currency_code}&charset=UTF-8"
         logger.info(f"フォールバック決済リンク生成: {payment_link}")
+        return payment_link
     except Exception as e:
         logger.error(f"フォールバック決済リンク生成エラー: {str(e)}")
         return ''
