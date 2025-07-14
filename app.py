@@ -2637,12 +2637,9 @@ def create_paypal_payment_link(amount, customer, request=None):
                     "cancel_url": (request.url_root.rstrip('/') if request else '') + url_for('payment_cancel'),
                     "brand_name": "PDF PayPal System",
                     "locale": "ja-JP",
-                    "landing_page": "GUEST_CHECKOUT",
+                    "landing_page": "LOGIN",
                     "shipping_preference": "NO_SHIPPING",
                     "user_action": "PAY_NOW"
-                },
-                "payment_method": {
-                    "payee_preferred": "UNRESTRICTED"
                 }
             }
             
