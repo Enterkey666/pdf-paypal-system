@@ -7,6 +7,7 @@
     <title>PDF一括処理 & PayPal決済リンク発行</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Bootstrap JavaScriptを先読みで読み込み -->
     <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
@@ -246,8 +247,77 @@
         
         .file-item:hover {
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-            transform: translateY(-2px);
-            border-left: 4px solid var(--accent-color);
+        }
+        
+        /* 決済プロバイダー選択のスタイル */
+        .provider-option {
+            margin-bottom: 0;
+        }
+        
+        .provider-label {
+            display: block;
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #e2e8f0;
+            border-radius: var(--border-radius);
+            background: white;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .provider-label:hover {
+            border-color: var(--primary-color);
+            background: #f8faff;
+            box-shadow: 0 2px 8px rgba(67, 97, 238, 0.1);
+        }
+        
+        .form-check-input:checked + .provider-label {
+            border-color: var(--primary-color);
+            background: linear-gradient(135deg, #f8faff, #f0f5ff);
+            box-shadow: 0 4px 12px rgba(67, 97, 238, 0.15);
+        }
+        
+        .form-check-input {
+            position: absolute;
+            opacity: 0;
+        }
+        
+        /* 無効なプロバイダーのスタイル */
+        .provider-option.disabled .provider-label {
+            background: #f8f9fa;
+            border-color: #e9ecef;
+            color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        .provider-option.disabled .provider-label:hover {
+            background: #f8f9fa;
+            border-color: #e9ecef;
+            box-shadow: none;
+        }
+        
+        .provider-option.disabled input[type="radio"] {
+            cursor: not-allowed;
+        }
+        
+        .provider-status .badge {
+            font-size: 0.7rem;
+            padding: 0.25rem 0.5rem;
+        }
+        
+        /* レスポンシブ調整 */
+        @media (max-width: 768px) {
+            .provider-label {
+                padding: 0.8rem;
+            }
+            
+            .provider-label .fab {
+                font-size: 1.5rem !important;
+            }
+            
+            .provider-status {
+                margin-top: 0.5rem;
+            }
         }
         
         .file-icon {
@@ -627,7 +697,7 @@
                                 <div class="feature-icon bg-info bg-gradient text-white p-2 rounded-circle me-3">
                                     <i class="bi bi-link-45deg"></i>
                                 </div>
-                                <p class="mb-0">PayPal決済リンクを自動生成</p>
+                                <p class="mb-0">PayPal/Stripe決済リンクを自動生成</p>
                             </div>
                         </div>
                         
@@ -649,6 +719,64 @@
                             <div class="file-list mt-4" id="file-list"></div>
                             
                             <div class="mt-4">
+                                <!-- 決済プロバイダー選択 -->
+                                <div class="form-group mb-4">
+                                    <label class="form-label fw-bold d-flex align-items-center">
+                                        <i class="bi bi-credit-card me-2"></i>決済プロバイダー
+                                        <span class="badge bg-secondary ms-2" id="provider-count">利用可能なプロバイダー: 確認中...</span>
+                                    </label>
+                                    <div class="row g-3" id="payment-providers">
+                                        <div class="col-md-6">
+                                            <div class="form-check provider-option" data-provider="paypal">
+                                                <input class="form-check-input" type="radio" name="payment_provider" id="provider-paypal" value="paypal" checked>
+                                                <label class="form-check-label provider-label" for="provider-paypal">
+                                                    <div class="d-flex align-items-center justify-content-between">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fab fa-paypal text-primary me-3" style="font-size: 1.8rem;"></i>
+                                                            <div>
+                                                                <div class="fw-bold">PayPal</div>
+                                                                <small class="text-muted">世界標準の決済サービス</small>
+                                                            </div>
+                                                        </div>
+                                                        <div class="provider-status">
+                                                            <div class="spinner-border spinner-border-sm text-muted" role="status">
+                                                                <span class="visually-hidden">確認中...</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="form-check provider-option" data-provider="stripe">
+                                                <input class="form-check-input" type="radio" name="payment_provider" id="provider-stripe" value="stripe">
+                                                <label class="form-check-label provider-label" for="provider-stripe">
+                                                    <div class="d-flex align-items-center justify-content-between">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="fab fa-stripe text-info me-3" style="font-size: 1.8rem;"></i>
+                                                            <div>
+                                                                <div class="fw-bold">Stripe</div>
+                                                                <small class="text-muted">開発者向け決済プラットフォーム</small>
+                                                            </div>
+                                                        </div>
+                                                        <div class="provider-status">
+                                                            <div class="spinner-border spinner-border-sm text-muted" role="status">
+                                                                <span class="visually-hidden">確認中...</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-2" id="provider-info">
+                                        <small class="text-muted">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            決済プロバイダーの利用可能性を確認しています...
+                                        </small>
+                                    </div>
+                                </div>
+
                                 <div class="form-group mb-4">
                                     <label for="amount-input" class="form-label fw-bold d-flex align-items-center">
                                         <i class="bi bi-currency-yen me-2"></i>請求金額（オプション）
@@ -728,6 +856,9 @@
             setTimeout(() => {
                 dragArea.classList.remove('animate__infinite');
             }, 3000);
+            
+            // 決済プロバイダーの利用可能性をチェック
+            checkPaymentProviders();
             
             // クリックでファイル選択
             browseBtn.addEventListener('click', () => {
@@ -919,20 +1050,28 @@
                     formData.append('amount', amountInput.value);
                 }
                 
+                // CSRFトークンを追加
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+                formData.append('csrf_token', csrfToken);
+                
                 // プログレスメッセージを更新
                 const progressMessage = document.getElementById('progress-message');
-                if (progressMessage) {
-                    progressMessage.textContent = `${nextFile.name} を処理中...`;
-                }
+                progressMessage.textContent = `${nextFile.name} をアップロード中...`;
+                
+                console.log('CSRFトークン:', csrfToken);
                 
                 // ファイルをアップロード
                 fetch('/upload', {
                     method: 'POST',
-                    body: formData
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: formData,
+                    credentials: 'same-origin' // セッションCookieを送信するために必要
                 })
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error('サーバーエラーが発生しました: ' + response.status);
+                        throw new Error('PDF処理中にエラーが発生しました: ' + response.status);
                     }
                     return response.json();
                 })
@@ -941,6 +1080,8 @@
                     if (data.success && data.filename) {
                         // /processエンドポイントを呼び出し
                         const processToken = document.querySelector('meta[name="csrf-token"]')?.content;
+                        // 選択された決済プロバイダーを取得
+                        const selectedProvider = document.querySelector('input[name="payment_provider"]:checked')?.value || 'paypal';
                         return fetch('/process', {
                             method: 'POST',
                             headers: {
@@ -949,6 +1090,7 @@
                             },
                             body: JSON.stringify({
                                 filename: data.filename,
+                                payment_provider: selectedProvider,
                                 csrf_token: processToken
                             })
                         })
@@ -1145,7 +1287,7 @@
                 // デバッグ情報を削除
                 
                 // 既に取得済みのCSRFトークンを使用
-                console.log('CSRFトークンをヘッダーに追加:', csrfToken);
+                console.log('CSRFトークンをヘッダーとフォームデータに追加:', csrfToken);
                 
                 // Fetch APIを使用してフォームデータを送信
                 fetch('/upload', {
@@ -1187,6 +1329,8 @@
                         
                         // /processエンドポイントを呼び出し
                         const processToken = document.querySelector('meta[name="csrf-token"]')?.content;
+                        // 選択された決済プロバイダーを取得
+                        const selectedProvider = document.querySelector('input[name="payment_provider"]:checked')?.value || 'paypal';
                         return fetch('/process', {
                             method: 'POST',
                             headers: {
@@ -1195,6 +1339,7 @@
                             },
                             body: JSON.stringify({
                                 filename: data.filename,
+                                payment_provider: selectedProvider,
                                 csrf_token: processToken
                             })
                         })
@@ -1535,6 +1680,9 @@
                             const originalText = this.innerHTML;
                             this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
                             
+                            // 選択された決済プロバイダーを取得
+                            const selectedProvider = document.querySelector('input[name="payment_provider"]:checked')?.value || 'paypal';
+                            
                             // 決済リンク生成APIを呼び出し
                             fetch('/generate_payment_link', {
                                 method: 'POST',
@@ -1546,6 +1694,7 @@
                                     customer: customer,
                                     amount: amount,
                                     index: index,
+                                    provider: selectedProvider,
                                     csrf_token: document.querySelector('meta[name=csrf-token]').getAttribute('content')
                                 })
                             })
@@ -1712,6 +1861,71 @@
                 }, 5000);
             }
         });
+        
+        // 決済プロバイダーの利用可能性をチェックする関数
+        async function checkPaymentProviders() {
+            const providers = ['paypal', 'stripe'];
+            let availableCount = 0;
+            
+            for (const provider of providers) {
+                try {
+                    const response = await fetch(`/api/check_provider/${provider}`, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    const providerElement = document.querySelector(`[data-provider="${provider}"]`);
+                    const statusElement = providerElement.querySelector('.provider-status');
+                    const radioInput = providerElement.querySelector('input[type="radio"]');
+                    
+                    if (data.available) {
+                        // 利用可能
+                        statusElement.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> 利用可能</span>';
+                        providerElement.classList.remove('disabled');
+                        radioInput.disabled = false;
+                        availableCount++;
+                    } else {
+                        // 利用不可
+                        statusElement.innerHTML = '<span class="badge bg-warning"><i class="bi bi-exclamation-triangle"></i> 設定必要</span>';
+                        providerElement.classList.add('disabled');
+                        radioInput.disabled = true;
+                        
+                        // チェックされている場合は他のプロバイダーを選択
+                        if (radioInput.checked) {
+                            const firstAvailable = document.querySelector('.provider-option:not(.disabled) input[type="radio"]');
+                            if (firstAvailable) {
+                                firstAvailable.checked = true;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error checking ${provider}:`, error);
+                    const providerElement = document.querySelector(`[data-provider="${provider}"]`);
+                    const statusElement = providerElement.querySelector('.provider-status');
+                    statusElement.innerHTML = '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> エラー</span>';
+                    providerElement.classList.add('disabled');
+                    providerElement.querySelector('input[type="radio"]').disabled = true;
+                }
+            }
+            
+            // 利用可能なプロバイダー数を更新
+            const countElement = document.getElementById('provider-count');
+            const infoElement = document.getElementById('provider-info');
+            
+            if (availableCount === 0) {
+                countElement.textContent = '利用可能なプロバイダー: なし';
+                countElement.className = 'badge bg-danger ms-2';
+                infoElement.innerHTML = '<small class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>決済プロバイダーが設定されていません。<a href="/settings" class="text-decoration-none">設定画面</a>で認証情報を入力してください。</small>';
+            } else {
+                countElement.textContent = `利用可能なプロバイダー: ${availableCount}/${providers.length}`;
+                countElement.className = availableCount === providers.length ? 'badge bg-success ms-2' : 'badge bg-warning ms-2';
+                infoElement.innerHTML = '<small class="text-success"><i class="bi bi-check-circle me-1"></i>決済プロバイダーの設定が完了しています。</small>';
+            }
+        }
     </script>
 </body>
 </html>

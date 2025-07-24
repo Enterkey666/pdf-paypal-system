@@ -28,22 +28,38 @@
                         {% endwith %}
                         
                         <form method="POST" action="{{ url_for('auth.login') }}">
+                            {{ form.csrf_token }}
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <!-- CSRFトークンが正しく設定されていることを確認 -->
                             {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
                             
                             <div class="form-group mb-3">
-                                <label for="username">ユーザー名</label>
-                                <input type="text" class="form-control" id="username" name="username" required>
+                                {{ form.username.label(class="form-label") }}
+                                {{ form.username(class="form-control", id="username", required=True) }}
+                                {% if form.username.errors %}
+                                    <div class="text-danger">
+                                        {% for error in form.username.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
                             </div>
                             
                             <div class="form-group mb-3">
-                                <label for="password">パスワード</label>
-                                <input type="password" class="form-control" id="password" name="password" required>
+                                {{ form.password.label(class="form-label") }}
+                                {{ form.password(class="form-control", id="password", required=True) }}
+                                {% if form.password.errors %}
+                                    <div class="text-danger">
+                                        {% for error in form.password.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
                             </div>
                             
                             <div class="form-check mb-3">
-                                <input type="checkbox" class="form-check-input" id="remember" name="remember">
-                                <label class="form-check-label" for="remember">ログイン状態を保持する</label>
+                                {{ form.remember(class="form-check-input", id="remember") }}
+                                {{ form.remember.label(class="form-check-label") }}
                             </div>
                             
                             <div class="d-grid mb-3">

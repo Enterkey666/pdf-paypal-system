@@ -6,12 +6,13 @@ from paypal_utils import get_api_base, get_paypal_access_token
 
 logger = logging.getLogger(__name__)
 
-def check_payment_status(order_id):
+def check_payment_status(order_id, provider=None):
     """
-    PayPal APIを使用して決済状態を確認する
+    決済プロバイダーのAPIを使用して決済状態を確認する
     
     Args:
-        order_id: PayPalのオーダーID
+        order_id: 決済プロバイダーのオーダーID
+        provider: 決済プロバイダー名 ('paypal' または 'stripe')
         
     Returns:
         状態文字列: 'COMPLETED', 'PENDING', 'FAILED', 'UNKNOWN'のいずれか
@@ -21,9 +22,34 @@ def check_payment_status(order_id):
         if not order_id or len(order_id) < 5:
             logger.warning(f"無効なオーダーID: {order_id}")
             return "UNKNOWN"
+        
+        # プロバイダーに応じて適切な関数を呼び出す
+        if provider and provider.lower() == 'stripe':
+            logger.info(f"Stripe決済状態確認開始: オーダーID={order_id}")
+            return check_stripe_payment_status(order_id)
+        else:
+            # プロバイダーが指定されていないか、PayPalの場合
+            logger.info(f"PayPal決済状態確認開始: オーダーID={order_id}")
+            return check_paypal_payment_status(order_id)
             
-        logger.info(f"PayPal決済状態確認開始: オーダーID={order_id}")
-            
+    except Exception as e:
+        logger.error(f"決済状態確認中の例外: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return "UNKNOWN"
+
+
+def check_paypal_payment_status(order_id):
+    """
+    PayPal APIを使用して決済状態を確認する
+    
+    Args:
+        order_id: PayPalのオーダーID
+        
+    Returns:
+        状態文字列: 'COMPLETED', 'PENDING', 'FAILED', 'UNKNOWN'のいずれか
+    """
+    try:
         # アクセストークン取得
         access_token = get_paypal_access_token()
         if not access_token:
@@ -91,6 +117,99 @@ def check_payment_status(order_id):
             return "UNKNOWN"
     except Exception as e:
         logger.error(f"PayPal決済状態確認中の例外: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return "UNKNOWN"
+
+
+def check_stripe_payment_status(payment_intent_id):
+    """
+    Stripe APIを使用して決済状態を確認する
+    
+    Args:
+        payment_intent_id: StripeのPayment Intent IDまたはSession ID
+        
+    Returns:
+        状態文字列: 'COMPLETED', 'PENDING', 'FAILED', 'UNKNOWN'のいずれか
+    """
+    try:
+        logger.info(f"Stripe決済状態確認開始: ID={payment_intent_id}")
+        
+        # Stripeの認証情報を取得
+        try:
+            from stripe_helpers import get_stripe_credentials
+            publishable_key, secret_key, mode = get_stripe_credentials()
+            if not secret_key:
+                logger.error("Stripeの認証情報が設定されていません")
+                return "UNKNOWN"
+        except ImportError:
+            # 後方互換性のため
+            from stripe_utils import configure_stripe
+            if not configure_stripe():
+                logger.error("Stripe APIキーの設定に失敗しました")
+                return "UNKNOWN"
+        
+        # Stripeモジュールをインポート
+        import stripe
+        if 'secret_key' in locals():
+            stripe.api_key = secret_key
+        
+        # まずPayment Intentとして取得を試みる
+        try:
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            logger.info(f"Stripe Payment Intent取得成功: {payment_intent_id}")
+            status = payment_intent.get('status', '')
+            
+            # 状態に応じて返却
+            if status == 'succeeded':
+                logger.info("支払い完了状態を返却: COMPLETED")
+                return "COMPLETED"  # 支払い完了
+            elif status in ['processing', 'requires_action', 'requires_confirmation', 'requires_capture']:
+                logger.info(f"処理中状態を返却: PENDING ({status})")
+                return "PENDING"    # 処理中
+            elif status in ['canceled', 'requires_payment_method']:
+                logger.info(f"失敗状態を返却: FAILED ({status})")
+                return "FAILED"     # 失敗
+            else:
+                logger.info(f"その他の状態を返却: {status}")
+                return "PENDING"    # 不明な状態は処理中として扱う
+                
+        except stripe.error.InvalidRequestError:
+            # Payment Intentでない場合は、Checkout Sessionとして試みる
+            try:
+                session = stripe.checkout.Session.retrieve(payment_intent_id)
+                logger.info(f"Stripe Checkout Session取得成功: {payment_intent_id}")
+                payment_status = session.get('payment_status', '')
+                status = session.get('status', '')
+                
+                # 状態に応じて返却
+                if payment_status == 'paid':
+                    logger.info("支払い完了状態を返却: COMPLETED")
+                    return "COMPLETED"  # 支払い完了
+                elif payment_status == 'unpaid' and status == 'complete':
+                    logger.info("セッション完了だが未払い状態を返却: PENDING")
+                    return "PENDING"    # セッション完了だが未払い
+                elif status == 'expired':
+                    logger.info("期限切れ状態を返却: FAILED")
+                    return "FAILED"     # 期限切れ
+                else:
+                    logger.info(f"その他の状態を返却: {payment_status}/{status}")
+                    return "PENDING"    # 不明な状態は処理中として扱う
+                    
+            except stripe.error.InvalidRequestError as e:
+                logger.error(f"Stripe APIエラー: {str(e)}")
+                return "UNKNOWN"
+                
+        except stripe.error.AuthenticationError as e:
+            logger.error(f"Stripe認証エラー: {str(e)}")
+            return "UNKNOWN"
+            
+        except Exception as e:
+            logger.error(f"Stripe APIエラー: {str(e)}")
+            return "UNKNOWN"
+            
+    except Exception as e:
+        logger.error(f"Stripe決済状態確認中の例外: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         return "UNKNOWN"

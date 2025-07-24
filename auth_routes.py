@@ -8,8 +8,16 @@
 
 import os
 import logging
+import traceback
 from flask import Blueprint, render_template, redirect, url_for, request, flash, session, current_app
 from flask_wtf import FlaskForm
+
+# CSRF保護関連
+try:
+    from flask_wtf.csrf import validate_csrf, CSRFError
+    CSRF_AVAILABLE = True
+except ImportError:
+    CSRF_AVAILABLE = False
 from wtforms import StringField, PasswordField, SubmitField, BooleanField, SelectField
 from wtforms.validators import DataRequired, Length, EqualTo, ValidationError
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -93,24 +101,53 @@ def login():
         return redirect(url_for('index'))
     
     form = LoginForm()
+    
     if form.validate_on_submit():
         username = form.username.data
         password = form.password.data
+        remember = form.remember.data
         
         user = database.get_user_by_username(username)
         
         if user and check_password_hash(user['password_hash'], password):
-            # セッションにユーザー情報を保存
-            session['user_id'] = user['id']
-            session['username'] = user['username']
-            session['is_admin'] = user['is_admin']
-            session['is_paid_member'] = user.get('is_paid_member', False)
-            # admin_logged_inも設定して一貫性を確保
-            session['admin_logged_in'] = user['is_admin']
+            logger.info(f"パスワード認証成功: {username}")
             
-            # ログイン状態を保持する場合
-            if form.remember.data:
-                session.permanent = True
+            # セッションにユーザー情報を保存
+            try:
+                logger.info("セッションにユーザー情報を保存開始")
+                session['user_id'] = user['id']
+                logger.info(f"user_id設定: {user['id']}")
+                session['username'] = user['username']
+                logger.info(f"username設定: {user['username']}")
+                session['is_admin'] = user['is_admin']
+                logger.info(f"is_admin設定: {user['is_admin']}")
+                session['is_paid_member'] = user.get('is_paid_member', False)
+                logger.info(f"is_paid_member設定: {user.get('is_paid_member', False)}")
+                # admin_logged_inも設定して一貫性を確保
+                session['admin_logged_in'] = user['is_admin']
+                logger.info(f"admin_logged_in設定: {user['is_admin']}")
+                
+                # ログイン状態を保持する場合
+                if remember:
+                    session.permanent = True
+                    logger.info("セッション永続化設定")
+                
+                # セッションを明示的に保存
+                session.modified = True
+                logger.info("セッション変更フラグ設定")
+                logger.info(f"セッション保存後: {dict(session)}")
+                
+                # セッションの内容をデバッグ出力
+                logger.info(f"user_id: {session.get('user_id')}")
+                logger.info(f"username: {session.get('username')}")
+                logger.info(f"is_admin: {session.get('is_admin')}")
+                logger.info(f"admin_logged_in: {session.get('admin_logged_in')}")
+                
+            except Exception as e:
+                logger.error(f"セッション保存エラー: {e}")
+                logger.error(f"トレースバック: {traceback.format_exc()}")
+                flash('ログインに失敗しました（セッションエラー）', 'danger')
+                return render_template('login.html', form=form)
             
             # Flask-Loginを使用してログイン
             if FLASK_LOGIN_AVAILABLE:
@@ -119,7 +156,7 @@ def login():
                     import database
                     user_obj = database.get_user_by_id(user['id'])
                     if user_obj:
-                        login_user(user_obj, remember=form.remember.data)
+                        login_user(user_obj, remember=bool(remember))
                         logger.info(f"Flask-Loginでユーザー '{username}' をログインしました")
                         # セッションと Flask-Login の状態を同期
                         try:
@@ -137,6 +174,13 @@ def login():
             
             # リダイレクト先の指定があればそこに、なければトップページに
             next_page = request.args.get('next')
+            if next_page:
+                logger.info(f"リダイレクト先: {next_page}")
+            else:
+                logger.info("トップページにリダイレクト")
+            
+            # セッションを再度保存してからリダイレクト
+            session.modified = True
             return redirect(next_page or url_for('index'))
         else:
             logger.warning(f"ユーザー '{username}' のログイン試行が失敗しました")

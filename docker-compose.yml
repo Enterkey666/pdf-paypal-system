@@ -1,12 +1,233 @@
-version: '3'
+# ====================================
+# PDF-PayPal-Stripe システム Docker Compose
+# ====================================
+
+version: '3.8'
 
 services:
-  pdf-app:
-    build: .
+  # =============================
+  # 🌐 メインアプリケーション
+  # =============================
+  app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: pdf-paypal-stripe-app
+    restart: unless-stopped
     ports:
       - "8080:8080"
+    environment:
+      # 基本設定
+      - FLASK_ENV=production
+      - DEBUG=False
+      # データベース設定
+      - DATABASE_URL=postgresql://pdf_user:${POSTGRES_PASSWORD}@postgres:5432/pdf_paypal_db
+      # Redis設定
+      - REDIS_URL=redis://redis:6379/0
+      # セキュリティ設定
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # 決済API設定
+      - STRIPE_MODE=${STRIPE_MODE}
+      - STRIPE_SECRET_KEY_TEST=${STRIPE_SECRET_KEY_TEST}
+      - STRIPE_PUBLISHABLE_KEY_TEST=${STRIPE_PUBLISHABLE_KEY_TEST}
+      - STRIPE_SECRET_KEY_LIVE=${STRIPE_SECRET_KEY_LIVE}
+      - STRIPE_PUBLISHABLE_KEY_LIVE=${STRIPE_PUBLISHABLE_KEY_LIVE}
+      - PAYPAL_MODE=${PAYPAL_MODE}
+      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID}
+      - PAYPAL_CLIENT_SECRET=${PAYPAL_CLIENT_SECRET}
+      # ログ設定
+      - LOG_LEVEL=INFO
+      - MASK_SENSITIVE_DATA=True
     volumes:
       - ./data:/app/data
-    environment:
-      - FLASK_ENV=production
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./backups:/app/backups
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - pdf-paypal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # =============================
+  # 🗄️ PostgreSQL データベース
+  # =============================
+  postgres:
+    image: postgres:15-alpine
+    container_name: pdf-paypal-postgres
     restart: unless-stopped
+    environment:
+      - POSTGRES_DB=pdf_paypal_db
+      - POSTGRES_USER=pdf_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --locale=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups/postgres:/var/lib/postgresql/backups
+    ports:
+      - "5432:5432"
+    networks:
+      - pdf-paypal-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdf_user -d pdf_paypal_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # =============================
+  # 🔴 Redis キャッシュ
+  # =============================
+  redis:
+    image: redis:7-alpine
+    container_name: pdf-paypal-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - pdf-paypal-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================
+  # 📊 Prometheus 監視
+  # =============================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pdf-paypal-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - pdf-paypal-network
+    depends_on:
+      - app
+
+  # =============================
+  # 📈 Grafana ダッシュボード
+  # =============================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pdf-paypal-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    networks:
+      - pdf-paypal-network
+    depends_on:
+      - prometheus
+
+  # =============================
+  # 🔄 バックアップサービス
+  # =============================
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    container_name: pdf-paypal-backup
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=pdf_paypal_db
+      - POSTGRES_USER=pdf_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}  # 毎日午前2時
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./backups:/backups
+      - postgres_data:/var/lib/postgresql/data:ro
+    networks:
+      - pdf-paypal-network
+    depends_on:
+      - postgres
+
+# =============================
+# 📦 ボリューム定義
+# =============================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# =============================
+# 🌐 ネットワーク定義
+# =============================
+networks:
+  pdf-paypal-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# =============================
+# 📋 使用方法・コメント
+# =============================
+
+# 🚀 起動方法:
+# docker-compose up -d
+
+# 🛑 停止方法:
+# docker-compose down
+
+# 🔄 再起動方法:
+# docker-compose restart
+
+# 📊 ログ確認:
+# docker-compose logs -f app
+
+# 🔧 特定サービスのみ起動:
+# docker-compose up -d app postgres redis
+
+# 🧹 完全削除（データも含む）:
+# docker-compose down -v
+
+# 📈 監視アクセス:
+# - Grafana: http://localhost:3000 (admin/[GRAFANA_PASSWORD])
+# - Prometheus: http://localhost:9090
+# - アプリ: http://localhost:8080
+
+# 🗃️ データベースアクセス:
+# docker-compose exec postgres psql -U pdf_user -d pdf_paypal_db
+
+# 🔴 Redisアクセス:
+# docker-compose exec redis redis-cli
+
+# 🚨 本番環境での注意事項:
+# 1. .env ファイルで機密情報を設定
+# 2. PostgreSQLのポートを外部公開しない
+# 3. SSL/TLS証明書の設定
+# 4. ファイアウォール設定
+# 5. 定期的なバックアップの確認

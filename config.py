@@ -39,6 +39,14 @@ def get_config():
         'paypal_mode': os.environ.get('PAYPAL_MODE', 'sandbox'),
         'client_id': os.environ.get('PAYPAL_CLIENT_ID', ''),
         'client_secret': os.environ.get('PAYPAL_CLIENT_SECRET', ''),
+        
+        # Stripe API設定
+        'stripe_publishable_key': os.environ.get('STRIPE_PUBLISHABLE_KEY', ''),
+        'stripe_secret_key': os.environ.get('STRIPE_SECRET_KEY', ''),
+        'stripe_mode': os.environ.get('STRIPE_MODE', 'test'),  # test/live
+        
+        # 決済プロバイダー選択
+        'default_payment_provider': os.environ.get('DEFAULT_PAYMENT_PROVIDER', 'paypal'),  # paypal/stripe
     }
     
     # PayPal認証情報のログ出力（セキュリティに配慮）
@@ -46,9 +54,18 @@ def get_config():
     logger.info(f"Config: PayPal client_id: {'設定あり' if config['client_id'] else '未設定'}")
     logger.info(f"Config: PayPal client_secret: {'設定あり' if config['client_secret'] else '未設定'}")
     
+    # Stripe認証情報のログ出力（セキュリティに配慮）
+    logger.info(f"Config: Stripe mode: {config['stripe_mode']}")
+    logger.info(f"Config: Stripe publishable_key: {'設定あり' if config['stripe_publishable_key'] else '未設定'}")
+    logger.info(f"Config: Stripe secret_key: {'設定あり' if config['stripe_secret_key'] else '未設定'}")
+    logger.info(f"Config: Default payment provider: {config['default_payment_provider']}")
+    
     # 設定に問題がある場合は警告
     if not config['client_id'] or not config['client_secret']:
         logger.warning("Config: PayPal認証情報が不足しています。APIの動作に影響する可能性があります.")
+    
+    if not config['stripe_publishable_key'] or not config['stripe_secret_key']:
+        logger.warning("Config: Stripe認証情報が不足しています。APIの動作に影響する可能性があります.")
     
     # セッションファイルディレクトリの設定
     session_dir = os.environ.get('SESSION_FILE_DIR')
@@ -108,6 +125,20 @@ def get_config():
     except Exception as e:
         logger.error(f"Config: PayPal接続テスト中にエラー発生: {str(e)}")
     
+    # Stripe接続テスト
+    try:
+        if config['stripe_secret_key']:
+            from stripe_utils import test_stripe_connection
+            logger.info("Config: テスト用Stripe接続を実行中...")
+            result = test_stripe_connection(config['stripe_secret_key'])
+            if result['success']:
+                logger.info(f"Config: Stripe接続テスト成功: {result['message']}")
+            else:
+                logger.warning(f"Config: Stripe接続テスト失敗: {result['message']}")
+    except Exception as e:
+        logger.error(f"Config: Stripe接続テスト中にエラー発生: {str(e)}")
+    
     logger.info(f"Config: PAYPAL_MODE: {config['paypal_mode']}")
+    logger.info(f"Config: STRIPE_MODE: {config['stripe_mode']}")
     
     return config

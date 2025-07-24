@@ -1,0 +1,118 @@
+{
+  "_metadata": {
+    "description": "拡張設定スキーマ例 - PayPal & Stripe決済システム",
+    "version": "2.0",
+    "last_updated": "2024-12-15"
+  },
+  
+  "payment_providers": {
+    "default_payment_provider": "paypal",
+    "enabled_payment_providers": ["paypal", "stripe"],
+    "provider_priority": ["stripe", "paypal"]
+  },
+  
+  "paypal_settings": {
+    "paypal_mode": "sandbox",
+    "paypal_client_id": "YOUR_PAYPAL_CLIENT_ID_HERE",
+    "paypal_client_secret": "YOUR_PAYPAL_CLIENT_SECRET_HERE"
+  },
+  
+  "stripe_settings": {
+    "stripe_mode": "test",
+    "stripe_secret_key_test": "sk_test_YOUR_STRIPE_SECRET_KEY_HERE",
+    "stripe_secret_key_live": "sk_live_YOUR_STRIPE_SECRET_KEY_HERE",
+    "stripe_publishable_key_test": "pk_test_YOUR_STRIPE_PUBLISHABLE_KEY_HERE",
+    "stripe_publishable_key_live": "pk_live_YOUR_STRIPE_PUBLISHABLE_KEY_HERE",
+    "stripe_webhook_secret": "whsec_YOUR_WEBHOOK_SECRET_HERE"
+  },
+  
+  "currency_settings": {
+    "default_currency": "JPY",
+    "supported_currencies": ["JPY", "USD", "EUR"],
+    "currency_conversion_api": "",
+    "auto_currency_detection": false
+  },
+  
+  "payment_link_settings": {
+    "payment_link_expire_days": 30,
+    "payment_link_auto_tax": false,
+    "payment_link_allow_quantity_adjustment": false,
+    "payment_link_collect_billing_address": true,
+    "payment_link_collect_shipping_address": false,
+    "custom_success_url": "",
+    "custom_cancel_url": ""
+  },
+  
+  "webhook_settings": {
+    "webhook_enable_signature_verification": true,
+    "webhook_timeout_seconds": 30,
+    "webhook_retry_attempts": 3,
+    "webhook_log_requests": true,
+    "webhook_notification_email": ""
+  },
+  
+  "ocr_settings": {
+    "enable_customer_extraction": true,
+    "enable_amount_extraction": true,
+    "use_ai_ocr": false,
+    "ocr_method": "tesseract",
+    "ocr_endpoint": "",
+    "ocr_confidence_threshold": 0.8,
+    "ocr_languages": ["jpn", "eng"]
+  },
+  
+  "processing_settings": {
+    "default_amount": 1000,
+    "max_file_size_mb": 10,
+    "allowed_file_types": [".pdf", ".jpg", ".jpeg", ".png"],
+    "batch_processing_enabled": false,
+    "auto_processing_enabled": false
+  },
+  
+  "security_settings": {
+    "encrypt_api_keys": true,
+    "api_key_rotation_days": 90,
+    "session_timeout_minutes": 30,
+    "max_login_attempts": 5,
+    "enable_2fa": false,
+    "allowed_ip_ranges": []
+  },
+  
+  "logging_settings": {
+    "log_level": "INFO",
+    "log_file_path": "logs/app.log",
+    "log_retention_days": 30,
+    "log_payment_details": true,
+    "log_ocr_results": false,
+    "log_api_requests": true
+  },
+  
+  "notification_settings": {
+    "email_notifications_enabled": false,
+    "smtp_server": "",
+    "smtp_port": 587,
+    "smtp_username": "",
+    "smtp_password": "",
+    "notification_recipients": [],
+    "slack_webhook_url": ""
+  },
+  
+  "ui_settings": {
+    "theme": "default",
+    "language": "ja",
+    "date_format": "YYYY-MM-DD",
+    "currency_display_format": "symbol",
+    "pagination_size": 50,
+    "auto_refresh_interval_seconds": 60
+  },
+  
+  "advanced_settings": {
+    "debug_mode": false,
+    "profiling_enabled": false,
+    "cache_enabled": true,
+    "cache_ttl_seconds": 300,
+    "async_processing": false,
+    "rate_limiting_enabled": true,
+    "rate_limit_requests_per_minute": 100
+  }
+}

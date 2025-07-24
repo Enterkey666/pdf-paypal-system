@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # 既存のPayPal連携モジュールをインポート
 from paypal_utils import get_paypal_access_token
 import database
+import os
 
 def safe_test_paypal_connection(client_id: str = None, client_secret: str = None, 
                                paypal_mode: Any = None, user_id: str = None) -> Dict[str, Any]:
@@ -48,7 +49,7 @@ def safe_test_paypal_connection(client_id: str = None, client_secret: str = None
         
         # アクセストークンを取得
         try:
-            token = get_paypal_access_token(client_id, client_secret, paypal_mode_str, user_id)
+            token = get_paypal_access_token(client_id, client_secret, paypal_mode_str)
         except Exception as token_err:
             logger.error(f"PayPalアクセストークン取得エラー: {str(token_err)}")
             return {
@@ -150,6 +151,201 @@ def get_paypal_settings(user_id: str = None) -> Tuple[str, str, str]:
     except Exception as e:
         logger.error(f"PayPal設定取得エラー: {str(e)}")
         return '', '', 'sandbox'
+
+
+def get_paypal_credentials(user_id: int = None) -> Tuple[str, str, str]:
+    """
+    PayPal認証情報を取得（ユーザー固有設定優先、環境変数・システム設定で後方互換性）
+    
+    Args:
+        user_id (int, optional): ユーザーID。指定がない場合はセッションから取得
+        
+    Returns:
+        Tuple[str, str, str]: client_id, client_secret, paypal_mode
+    """
+    try:
+        # ユーザーIDの決定（セッションから取得）
+        if user_id is None:
+            try:
+                from flask import session
+                user_id = session.get('user_id')
+            except:
+                user_id = None
+        
+        # ユーザー固有の設定を優先して取得
+        if user_id:
+            try:
+                user_credentials = database.get_user_paypal_credentials(user_id)
+                
+                if user_credentials:
+                    client_id = user_credentials.get('client_id', '')
+                    client_secret = user_credentials.get('client_secret', '')
+                    mode = user_credentials.get('mode', 'sandbox')
+                    
+                    # ユーザー固有の設定が完全にある場合はそれを返す
+                    if client_id and client_secret:
+                        logger.info(f"ユーザーID {user_id} のPayPal設定を使用: {mode}モード")
+                        return str(client_id), str(client_secret), str(mode)
+                    else:
+                        logger.info(f"ユーザーID {user_id} のPayPal設定が不完全なため、システム設定にフォールバック")
+                        
+            except Exception as e:
+                logger.warning(f"ユーザーPayPal設定取得エラー: {e}")
+        
+        # システム全体の設定にフォールバック
+        logger.info("システム全体のPayPal設定を使用")
+        return get_system_paypal_credentials()
+        
+    except Exception as e:
+        logger.error(f"PayPal認証情報取得エラー: {e}")
+        return '', '', 'sandbox'
+
+def get_system_paypal_credentials() -> Tuple[str, str, str]:
+    """
+    システム全体のPayPal認証情報を取得
+    
+    Returns:
+        Tuple[str, str, str]: client_id, client_secret, paypal_mode
+    """
+    try:
+        # 環境変数から認証情報を取得
+        client_id = os.environ.get('PAYPAL_CLIENT_ID', '')
+        client_secret = os.environ.get('PAYPAL_CLIENT_SECRET', '')
+        paypal_mode = os.environ.get('PAYPAL_MODE', 'sandbox')
+        
+        # 環境変数に設定がない場合はデータベースから取得
+        if not client_id or not client_secret:
+            try:
+                # config_managerから設定を取得
+                from config_manager import get_config
+                config = get_config()
+                
+                if not client_id:
+                    client_id = config.get('client_id', '') or config.get('paypal_client_id', '')
+                if not client_secret:
+                    client_secret = config.get('client_secret', '') or config.get('paypal_client_secret', '')
+                if not paypal_mode:
+                    paypal_mode = config.get('paypal_mode', 'sandbox')
+                    
+            except Exception as db_err:
+                logger.warning(f"データベースからPayPal設定取得エラー: {str(db_err)}")
+        
+        logger.info(f"システムPayPal設定: {paypal_mode}モード")
+        # 常に文字列型を返す
+        return str(client_id), str(client_secret), str(paypal_mode)
+        
+    except Exception as e:
+        logger.error(f"システムPayPal認証情報取得エラー: {str(e)}")
+        # エラー時はデフォルト値を返す
+        return '', '', 'sandbox'
+
+
+def create_guest_payment_link(customer_name: str, amount: float, user_id: str = None) -> Dict[str, Any]:
+    """
+    ゲスト決済リンクを作成する
+    
+    Args:
+        customer_name (str): 顧客名
+        amount (float): 金額
+        user_id (str, optional): ユーザーID
+        
+    Returns:
+        Dict[str, Any]: 決済リンク情報
+    """
+    logger.info(f"ゲスト決済リンク作成: 顧客={customer_name}, 金額={amount}")
+    
+    try:
+        # payment_utils.pyのget_default_payment_providerを使用してデフォルトプロバイダーを取得
+        from payment_utils import get_default_payment_provider, create_payment_link
+        provider = get_default_payment_provider()
+        
+        logger.info(f"デフォルト決済プロバイダー: {provider}")
+        
+        # 適切なプロバイダーを使用して決済リンクを作成
+        result = create_payment_link(
+            provider=provider,
+            amount=amount,
+            customer_name=customer_name,
+            description=f"ゲスト決済: {customer_name}"
+        )
+        
+        # 結果を統一フォーマットに変換
+        if result.get('success'):
+            return {
+                'success': True,
+                'payment_link': result.get('payment_link'),
+                'provider': result.get('provider'),
+                'details': result.get('details', {})
+            }
+        else:
+            return {
+                'success': False,
+                'error': result.get('message', 'ゲスト決済リンク作成に失敗しました'),
+                'payment_link': None,
+                'provider': result.get('provider')
+            }
+    
+    except Exception as e:
+        logger.error(f"ゲスト決済リンク作成エラー: {str(e)}")
+        return {
+            'success': False,
+            'error': f'ゲスト決済リンク作成エラー: {str(e)}',
+            'payment_link': None
+        }
+
+
+def create_payment_link(customer_name: str, amount: float, user_id: str = None) -> Dict[str, Any]:
+    """
+    通常の決済リンクを作成する
+    
+    Args:
+        customer_name (str): 顧客名
+        amount (float): 金額
+        user_id (str, optional): ユーザーID
+        
+    Returns:
+        Dict[str, Any]: 決済リンク情報
+    """
+    logger.info(f"通常決済リンク作成: 顧客={customer_name}, 金額={amount}")
+    
+    try:
+        # payment_utils.pyのget_default_payment_providerを使用してデフォルトプロバイダーを取得
+        from payment_utils import get_default_payment_provider, create_payment_link as utils_create_payment_link
+        provider = get_default_payment_provider()
+        
+        logger.info(f"デフォルト決済プロバイダー: {provider}")
+        
+        # 適切なプロバイダーを使用して決済リンクを作成
+        result = utils_create_payment_link(
+            provider=provider,
+            amount=amount,
+            customer_name=customer_name,
+            description=f"決済: {customer_name}"
+        )
+        
+        # 結果を統一フォーマットに変換
+        if result.get('success'):
+            return {
+                'success': True,
+                'payment_link': result.get('payment_link'),
+                'provider': result.get('provider'),
+                'details': result.get('details', {})
+            }
+        else:
+            return {
+                'success': False,
+                'error': result.get('message', '決済リンク作成に失敗しました'),
+                'payment_link': None,
+                'provider': result.get('provider')
+            }
+    
+    except Exception as e:
+        logger.error(f"決済リンク作成エラー: {str(e)}")
+        return {
+            'success': False,
+            'error': f'決済リンク作成エラー: {str(e)}',
+            'payment_link': None
+        }
 
 
 def generate_payment_link(customer_name: str, amount: Any, filename: str = None, user_id: str = None) -> Dict[str, Any]:

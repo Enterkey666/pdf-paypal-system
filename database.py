@@ -15,9 +15,104 @@ import hashlib
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
+from security_config import SecurityConfig
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
+
+# セキュリティ設定の初期化
+security_config = SecurityConfig()
+
+def encrypt_sensitive_data(data):
+    """機密データの暗号化"""
+    if not data or data == '':
+        return data
+    try:
+        return security_config.encrypt_api_key(data)
+    except Exception as e:
+        logger.error(f"データ暗号化エラー: {e}")
+        return data
+
+def decrypt_sensitive_data(encrypted_data):
+    """機密データの復号化（平文データとの互換性あり）"""
+    if not encrypted_data or encrypted_data == '':
+        return encrypted_data
+    
+    # 既に平文の可能性をチェック（Stripe/PayPalキーの形式チェック）
+    if (encrypted_data.startswith(('sk_test_', 'sk_live_', 'pk_test_', 'pk_live_', 'whsec_')) or
+        len(encrypted_data) < 50):  # 暗号化されたデータは通常50文字以上
+        # 平文データとして扱う（既存データの後方互換性）
+        logger.debug("平文データとして処理")
+        return encrypted_data
+    
+    try:
+        # 暗号化されたデータとして復号化を試みる
+        decrypted = security_config.decrypt_api_key(encrypted_data)
+        logger.debug("暗号化データとして復号化成功")
+        return decrypted
+    except Exception as e:
+        # 復号化に失敗した場合は平文として扱う（フォールバック）
+        logger.warning(f"復号化失敗、平文として処理: {e}")
+        return encrypted_data
+
+def migrate_existing_plaintext_data():
+    """既存の平文データを暗号化データに移行（オプション機能）"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 全ての決済プロバイダー設定を取得
+        cursor.execute("SELECT * FROM payment_provider_settings")
+        rows = cursor.fetchall()
+        
+        migration_count = 0
+        for row in rows:
+            settings = dict(row)
+            user_id = settings['id']
+            need_update = False
+            update_data = {}
+            
+            # PayPal client_secretが平文かチェック
+            if (settings.get('paypal_client_secret') and 
+                len(settings['paypal_client_secret']) < 50 and
+                not settings['paypal_client_secret'].startswith('gAAAAA')):  # Fernetの暗号化パターン
+                update_data['paypal_client_secret'] = encrypt_sensitive_data(settings['paypal_client_secret'])
+                need_update = True
+            
+            # Stripe secret_keysが平文かチェック
+            for key_field in ['stripe_secret_key_test', 'stripe_secret_key_live', 'stripe_webhook_secret']:
+                if (settings.get(key_field) and 
+                    len(settings[key_field]) < 50 and
+                    not settings[key_field].startswith('gAAAAA')):
+                    update_data[key_field] = encrypt_sensitive_data(settings[key_field])
+                    need_update = True
+            
+            # 更新が必要な場合は実行
+            if need_update:
+                update_sql = "UPDATE payment_provider_settings SET "
+                update_fields = []
+                update_values = []
+                
+                for field, value in update_data.items():
+                    update_fields.append(f"{field} = ?")
+                    update_values.append(value)
+                
+                update_fields.append("updated_at = CURRENT_TIMESTAMP")
+                update_sql += ", ".join(update_fields) + " WHERE id = ?"
+                update_values.append(user_id)
+                
+                cursor.execute(update_sql, update_values)
+                migration_count += 1
+        
+        conn.commit()
+        logger.info(f"既存データの暗号化マイグレーション完了: {migration_count}件更新")
+        return True, f"{migration_count}件のデータを暗号化しました"
+        
+    except Exception as e:
+        logger.error(f"データマイグレーションエラー: {e}")
+        return False, str(e)
+    finally:
+        conn.close()
 
 def safe_generate_password_hash(password):
     """Python 3.9互換の安全なパスワードハッシュ生成"""
@@ -67,7 +162,7 @@ def init_db():
         )
         ''')
         
-        # PayPal設定テーブル作成
+        # PayPal設定テーブル作成（後方互換性のため維持）
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS paypal_settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +174,37 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        ''')
+        
+        # 統合決済プロバイダー設定テーブル作成
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payment_provider_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            provider_name TEXT NOT NULL,
+            is_enabled BOOLEAN DEFAULT 1,
+            mode TEXT DEFAULT 'sandbox',
+            
+            -- PayPal設定
+            paypal_client_id TEXT,
+            paypal_client_secret TEXT,
+            
+            -- Stripe設定
+            stripe_publishable_key_test TEXT,
+            stripe_secret_key_test TEXT,
+            stripe_publishable_key_live TEXT,
+            stripe_secret_key_live TEXT,
+            stripe_webhook_secret TEXT,
+            
+            -- 共通設定
+            default_currency TEXT DEFAULT 'JPY',
+            
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            UNIQUE(user_id, provider_name)
         )
         ''')
         
@@ -881,6 +1007,223 @@ def get_payment_status_by_order_id(order_id, user_id=None):
         return {'success': False, 'error': str(e)}
     finally:
         conn.close()
+
+# ===================
+# 統合決済プロバイダー設定管理関数
+# ===================
+
+def save_payment_provider_settings(user_id, provider_name, settings):
+    """ユーザーの決済プロバイダー設定を保存
+    
+    Args:
+        user_id (int): ユーザーID
+        provider_name (str): プロバイダー名 ('paypal' または 'stripe')
+        settings (dict): 設定辞書
+        
+    Returns:
+        tuple: (成功フラグ, メッセージ)
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 既存の設定を確認
+        cursor.execute(
+            "SELECT id FROM payment_provider_settings WHERE user_id = ? AND provider_name = ?",
+            (user_id, provider_name)
+        )
+        existing = cursor.fetchone()
+        
+        if provider_name.lower() == 'paypal':
+            if existing:
+                # 既存設定を更新
+                cursor.execute("""
+                    UPDATE payment_provider_settings 
+                    SET paypal_client_id = ?, paypal_client_secret = ?, mode = ?, 
+                        default_currency = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND provider_name = ?
+                """, (
+                    settings.get('client_id', ''),
+                    encrypt_sensitive_data(settings.get('client_secret', '')),
+                    settings.get('mode', 'sandbox'),
+                    settings.get('currency', 'JPY'),
+                    settings.get('is_enabled', True),
+                    user_id, provider_name
+                ))
+            else:
+                # 新規作成
+                cursor.execute("""
+                    INSERT INTO payment_provider_settings 
+                    (user_id, provider_name, paypal_client_id, paypal_client_secret, 
+                     mode, default_currency, is_enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    user_id, provider_name,
+                    settings.get('client_id', ''),
+                    encrypt_sensitive_data(settings.get('client_secret', '')),
+                    settings.get('mode', 'sandbox'),
+                    settings.get('currency', 'JPY'),
+                    settings.get('is_enabled', True)
+                ))
+                
+        elif provider_name.lower() == 'stripe':
+            if existing:
+                # 既存設定を更新
+                cursor.execute("""
+                    UPDATE payment_provider_settings 
+                    SET stripe_publishable_key_test = ?, stripe_secret_key_test = ?,
+                        stripe_publishable_key_live = ?, stripe_secret_key_live = ?,
+                        stripe_webhook_secret = ?, mode = ?, default_currency = ?, 
+                        is_enabled = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND provider_name = ?
+                """, (
+                    settings.get('publishable_key_test', ''),
+                    encrypt_sensitive_data(settings.get('secret_key_test', '')),
+                    settings.get('publishable_key_live', ''),
+                    encrypt_sensitive_data(settings.get('secret_key_live', '')),
+                    encrypt_sensitive_data(settings.get('webhook_secret', '')),
+                    settings.get('mode', 'test'),
+                    settings.get('currency', 'JPY'),
+                    settings.get('is_enabled', True),
+                    user_id, provider_name
+                ))
+            else:
+                # 新規作成
+                cursor.execute("""
+                    INSERT INTO payment_provider_settings 
+                    (user_id, provider_name, stripe_publishable_key_test, stripe_secret_key_test,
+                     stripe_publishable_key_live, stripe_secret_key_live, stripe_webhook_secret,
+                     mode, default_currency, is_enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    user_id, provider_name,
+                    settings.get('publishable_key_test', ''),
+                    encrypt_sensitive_data(settings.get('secret_key_test', '')),
+                    settings.get('publishable_key_live', ''),
+                    encrypt_sensitive_data(settings.get('secret_key_live', '')),
+                    encrypt_sensitive_data(settings.get('webhook_secret', '')),
+                    settings.get('mode', 'test'),
+                    settings.get('currency', 'JPY'),
+                    settings.get('is_enabled', True)
+                ))
+        
+        conn.commit()
+        logger.info(f"{provider_name}設定を保存しました: ユーザーID {user_id}")
+        return True, f"{provider_name}設定を保存しました"
+        
+    except Exception as e:
+        logger.error(f"{provider_name}設定保存エラー: {str(e)}")
+        return False, str(e)
+    finally:
+        conn.close()
+
+def get_payment_provider_settings(user_id, provider_name=None):
+    """ユーザーの決済プロバイダー設定を取得
+    
+    Args:
+        user_id (int): ユーザーID
+        provider_name (str, optional): 特定のプロバイダー名
+        
+    Returns:
+        dict or list: 設定辞書または設定リスト
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if provider_name:
+            # 特定のプロバイダー設定を取得
+            cursor.execute("""
+                SELECT * FROM payment_provider_settings 
+                WHERE user_id = ? AND provider_name = ?
+            """, (user_id, provider_name))
+            row = cursor.fetchone()
+            
+            if row:
+                settings = dict(row)
+                # 機密データを復号化
+                if 'paypal_client_secret' in settings and settings['paypal_client_secret']:
+                    settings['paypal_client_secret'] = decrypt_sensitive_data(settings['paypal_client_secret'])
+                if 'stripe_secret_key_test' in settings and settings['stripe_secret_key_test']:
+                    settings['stripe_secret_key_test'] = decrypt_sensitive_data(settings['stripe_secret_key_test'])
+                if 'stripe_secret_key_live' in settings and settings['stripe_secret_key_live']:
+                    settings['stripe_secret_key_live'] = decrypt_sensitive_data(settings['stripe_secret_key_live'])
+                if 'stripe_webhook_secret' in settings and settings['stripe_webhook_secret']:
+                    settings['stripe_webhook_secret'] = decrypt_sensitive_data(settings['stripe_webhook_secret'])
+                return settings
+            return None
+        else:
+            # 全てのプロバイダー設定を取得
+            cursor.execute("""
+                SELECT * FROM payment_provider_settings 
+                WHERE user_id = ?
+            """, (user_id,))
+            rows = cursor.fetchall()
+            
+            decrypted_settings = []
+            for row in rows:
+                settings = dict(row)
+                # 機密データを復号化
+                if 'paypal_client_secret' in settings and settings['paypal_client_secret']:
+                    settings['paypal_client_secret'] = decrypt_sensitive_data(settings['paypal_client_secret'])
+                if 'stripe_secret_key_test' in settings and settings['stripe_secret_key_test']:
+                    settings['stripe_secret_key_test'] = decrypt_sensitive_data(settings['stripe_secret_key_test'])
+                if 'stripe_secret_key_live' in settings and settings['stripe_secret_key_live']:
+                    settings['stripe_secret_key_live'] = decrypt_sensitive_data(settings['stripe_secret_key_live'])
+                if 'stripe_webhook_secret' in settings and settings['stripe_webhook_secret']:
+                    settings['stripe_webhook_secret'] = decrypt_sensitive_data(settings['stripe_webhook_secret'])
+                decrypted_settings.append(settings)
+            return decrypted_settings
+            
+    except Exception as e:
+        logger.error(f"決済プロバイダー設定取得エラー: {str(e)}")
+        return None if provider_name else []
+    finally:
+        conn.close()
+
+def get_user_paypal_credentials(user_id):
+    """ユーザーのPayPal認証情報を取得
+    
+    Args:
+        user_id (int): ユーザーID
+        
+    Returns:
+        tuple: (client_id, client_secret, mode) or (None, None, None)
+    """
+    settings = get_payment_provider_settings(user_id, 'paypal')
+    if settings and settings.get('is_enabled'):
+        return (
+            settings.get('paypal_client_id'),
+            settings.get('paypal_client_secret'),
+            settings.get('mode', 'sandbox')
+        )
+    return (None, None, None)
+
+def get_user_stripe_credentials(user_id):
+    """ユーザーのStripe認証情報を取得
+    
+    Args:
+        user_id (int): ユーザーID
+        
+    Returns:
+        tuple: (publishable_key, secret_key, mode) or (None, None, None)
+    """
+    settings = get_payment_provider_settings(user_id, 'stripe')
+    if settings and settings.get('is_enabled'):
+        mode = settings.get('mode', 'test')
+        if mode == 'test':
+            return (
+                settings.get('stripe_publishable_key_test'),
+                settings.get('stripe_secret_key_test'),
+                mode
+            )
+        else:
+            return (
+                settings.get('stripe_publishable_key_live'),
+                settings.get('stripe_secret_key_live'),
+                mode
+            )
+    return (None, None, None)
 
 # データベースの初期化（モジュールインポート時に実行）
 if __name__ == "__main__":

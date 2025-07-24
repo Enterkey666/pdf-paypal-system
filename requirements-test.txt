@@ -1,0 +1,32 @@
+# テスト実行用依存関係
+
+# テストフレームワーク
+pytest>=7.0.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0
+pytest-json-report>=1.5.0
+pytest-html>=3.1.0
+
+# パフォーマンステスト用
+psutil>=5.9.0
+
+# モック・ダミーデータ生成
+faker>=18.0.0
+
+# HTTPリクエストテスト
+requests-mock>=1.10.0
+
+# 日時操作テスト
+freezegun>=1.2.0
+
+# 並行処理テスト
+pytest-xdist>=3.0.0
+
+# テストデータ管理
+pytest-datadir>=1.4.0
+
+# レポート生成
+jinja2>=3.1.0
+
+# カバレッジ可視化
+coverage[toml]>=7.0.0

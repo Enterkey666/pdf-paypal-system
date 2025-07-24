@@ -106,8 +106,26 @@ def process_single_pdf(filepath, filename, request):
         # 決済リンクを生成
         if customer_name and amount:
             try:
-                from paypal_helpers import generate_payment_link
-                payment_link = generate_payment_link(customer_name, amount, filename)
+                # デフォルトの決済プロバイダーを使用して決済リンクを生成（統一ロジックで自動切り替え含む）
+                from payment_utils import create_payment_link, get_default_payment_provider
+                
+                provider = get_default_payment_provider()
+                logger.info(f"決済リンク生成: プロバイダー={provider}, 顧客名={customer_name}, 金額={amount}")
+                
+                # 決済リンクを生成（payment_utils.pyの統一ロジックが自動で利用可能性チェックと代替プロバイダー切り替えを行う）
+                result = create_payment_link(
+                    provider=provider,
+                    amount=float(amount),
+                    customer_name=customer_name,
+                    description=filename
+                )
+                payment_link = result.get('payment_link')
+                
+                # 使用したプロバイダーをログに記録
+                logger.info(f"決済リンク生成結果: プロバイダー={result.get('provider', provider)}, 成功={result.get('success', False)}")
+                if not result.get('success', False):
+                    logger.warning(f"決済リンク生成失敗: {result.get('message', '不明なエラー')}")
+                
                 
                 # 処理結果を返す
                 return {

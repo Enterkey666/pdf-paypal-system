@@ -1,0 +1,110 @@
+# ====================================
+# Prometheus 設定ファイル
+# PDF-PayPal-Stripe システム監視
+# ====================================
+
+global:
+  # スクレイピング間隔
+  scrape_interval: 15s
+  # 評価間隔
+  evaluation_interval: 15s
+  # 外部ラベル
+  external_labels:
+    monitor: 'pdf-paypal-stripe-monitor'
+    environment: 'production'
+
+# アラートマネージャー設定
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# ルール設定ファイル
+rule_files:
+  - "alert_rules.yml"
+
+# スクレイピング設定
+scrape_configs:
+  # Prometheusの自己監視
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # PDFアプリケーション監視
+  - job_name: 'pdf-paypal-stripe-app'
+    static_configs:
+      - targets: ['app:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+    # ヘルスチェックも監視
+    params:
+      format: ['prometheus']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: app:8080
+
+  # PostgreSQLデータベース監視
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Redis監視
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Node Exporter（システムメトリクス）
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Docker監視
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # カスタムメトリクス（Stripe API監視）
+  - job_name: 'stripe-metrics'
+    static_configs:
+      - targets: ['app:8080']
+    scrape_interval: 60s
+    metrics_path: /api/metrics/stripe
+    scrape_timeout: 30s
+
+  # PayPal API監視
+  - job_name: 'paypal-metrics'
+    static_configs:
+      - targets: ['app:8080']
+    scrape_interval: 60s
+    metrics_path: /api/metrics/paypal
+    scrape_timeout: 30s
+
+# 保存設定
+storage:
+  # データ保持期間
+  tsdb:
+    retention.time: 30d
+    retention.size: 10GB
+
+# リモート書き込み設定（オプション）
+# remote_write:
+#   - url: "https://your-remote-prometheus-url/api/v1/write"
+#     basic_auth:
+#       username: your_username
+#       password: your_password

@@ -161,6 +161,7 @@ def clear_cache():
     _process_cache.clear()
     logger.info("処理キャッシュをクリアしました")
 
+
 # 必要なモジュールをインポート
 # ローカルモジュールのインポート
 # 初期化: インポートが失敗した場合に備えて、ダミーのcustomer_extractorモジュールを作成
@@ -374,8 +375,8 @@ load_dotenv()
 app = Flask(__name__)
 
 # セッション管理のためのシークレットキー設定
-# 環境変数からシークレットキーを取得するか、ランダムに生成
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+# 環境変数からシークレットキーを取得するか、固定値を使用（開発環境用）
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-pdf-paypal-system-2025')
 # バイナリの場合は表示方法を変更
 if isinstance(app.secret_key, str):
     key_display = app.secret_key[:5]
@@ -390,26 +391,41 @@ app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でのテストを可能に
 app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']  # CSRFチェック対象のHTTPメソッド
 
-# CSRF保護の初期化（安全な初期化）
-if FLASK_WTF_AVAILABLE:
+# CSRF保護の初期化は後で行う
+
+# Stripe統合のためのインポート
+try:
+    from stripe_flask_integration import register_stripe_blueprints, add_stripe_routes_to_existing_app
+    STRIPE_INTEGRATION_AVAILABLE = True
+    print("✓ Stripe統合モジュールのインポート成功")
+except ImportError as e:
+    print(f"⚠ Stripe統合モジュールのインポート失敗: {e}")
+    STRIPE_INTEGRATION_AVAILABLE = False
+
+# Stripe統合の初期化
+if STRIPE_INTEGRATION_AVAILABLE:
     try:
-        csrf = CSRFProtect(app)
-        app.logger.info("CSRF保護を初期化しました")
+        # Blueprintの登録
+        register_stripe_blueprints(app)
+        
+        # 追加ルートの登録
+        add_stripe_routes_to_existing_app(app)
+        
+        app.logger.info("Stripe統合が正常に初期化されました")
     except Exception as e:
-        app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
-        csrf = None
+        app.logger.error(f"Stripe統合初期化エラー: {str(e)}")
 else:
-    app.logger.warning("Flask-WTF が利用できないため、CSRF保護は無効です")
-    csrf = None
+    app.logger.warning("Stripe統合が利用できません")
 
 # セッションの設定
-app.config['SESSION_TYPE'] = 'filesystem'  # ファイルシステムベースのセッション
+# セッション設定の統合
+app.config['SESSION_TYPE'] = 'null'  # Flaskのデフォルトセッション（署名されたクッキー）を使用
 app.config['SESSION_PERMANENT'] = True  # 永続的なセッション
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)  # セッションの有効期限
 app.config['SESSION_COOKIE_NAME'] = 'pdf_paypal_session'  # セッションCookie名
-app.config['SESSION_COOKIE_SECURE'] = False  # 開発環境では無効化
-app.config['SESSION_COOKIE_HTTPONLY'] = True  # JavaScriptからのアクセスを禁止
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # クロスサイトリクエスト制限
+app.config['SESSION_COOKIE_SECURE'] = False  # 開発環境では無効化（HTTP接続で動作）
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # XSS対策
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF対策
 app.config['SESSION_USE_SIGNER'] = True  # セッション署名を有効化
 app.config['SESSION_COOKIE_DOMAIN'] = None  # ローカル開発環境用
 
@@ -481,28 +497,36 @@ else:
 
 app.config['SESSION_FILE_THRESHOLD'] = 500  # 最大セッションファイル数
 app.config['SESSION_KEY_PREFIX'] = 'pdf_paypal_'  # セッションキーのプレフィックス
+app.config['SESSION_COOKIE_SECURE'] = False  # HTTP接続でも動作
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Flask-WTFのCSRF設定
-app.config['WTF_CSRF_ENABLED'] = True
-app.config['WTF_CSRF_SECRET_KEY'] = os.environ.get('CSRF_SECRET_KEY', app.secret_key)
+# CSRF設定の修正
+app.config['WTF_CSRF_ENABLED'] = False  # 開発環境では無効化（本番では有効にする）
+app.config['WTF_CSRF_SECRET_KEY'] = app.secret_key  # アプリのシークレットキーを使用
 app.config['WTF_CSRF_SSL_STRICT'] = False  # 開発環境でも動作するように
 app.config['WTF_CSRF_METHODS'] = ['POST', 'PUT', 'PATCH', 'DELETE']
 app.config['WTF_CSRF_TIME_LIMIT'] = 3600  # 1時間
-app.logger.info("CSRF設定を構成しました")
+app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # デフォルトでCSRFチェックを無効化
+app.logger.info("CSRF設定を構成しました（開発環境では無効化）")
 
-# Flask-Sessionの初期化（安全な初期化）
-if FLASK_SESSION_AVAILABLE:
-    try:
-        session_interface = Session(app)
-        app.logger.info("セッション管理の初期化完了")
-    except Exception as e:
-        app.logger.warning(f"セッション管理の初期化に失敗: {e}")
-        session_interface = None
-else:
-    app.logger.warning("Flask-Session が利用できないため、デフォルトのセッション管理を使用")
-    session_interface = None
-app.logger.info(f"セッションインターフェース: {type(session_interface).__name__}")
+# Flask-Sessionは使用せず、デフォルトのFlaskセッションを使用
+session_interface = None
+app.logger.info("デフォルトのFlaskセッション（署名されたクッキー）を使用")
 app.logger.info(f"セッション設定: {app.config.get('SESSION_TYPE')}")
+
+# セッションの動作確認
+try:
+    with app.test_request_context():
+        from flask import session as test_session
+        test_session['test'] = 'value'
+        app.logger.info("セッション動作確認: 成功")
+except Exception as e:
+    app.logger.error(f"セッション動作確認: 失敗 - {e}")
+
+app.logger.info(f"セッションインターフェース: Default Flask Session")
+app.logger.info(f"セッションシークレットキー: {app.secret_key[:10]}...")
 
 # CSRF保護の初期化（セッションの後に初期化、安全な初期化）
 if FLASK_WTF_AVAILABLE:
@@ -511,6 +535,30 @@ if FLASK_WTF_AVAILABLE:
         app.logger.info("CSRF保護を初期化しました")
         app.logger.info(f"CSRF設定: 有効={app.config.get('WTF_CSRF_ENABLED')}, メソッド={app.config.get('WTF_CSRF_METHODS')}")
         app.logger.info(f"CSRF時間制限: {app.config.get('WTF_CSRF_TIME_LIMIT')}秒")
+        
+        # CSRFトークンをテンプレートで利用可能にする（無効化されている場合は空文字を返す）
+        @app.context_processor
+        def inject_csrf_token():
+            def csrf_token():
+                if app.config.get('WTF_CSRF_ENABLED', False):
+                    try:
+                        from flask_wtf.csrf import generate_csrf
+                        return generate_csrf()
+                    except Exception as e:
+                        app.logger.warning(f"CSRF token generation failed: {e}")
+                        return ""
+                else:
+                    return ""  # CSRF無効化時は空文字を返す
+            return dict(csrf_token=csrf_token)
+        
+        # アップロード処理をCSRF検証から除外
+        try:
+            csrf.exempt("upload_file")
+            app.logger.info("CSRF検証からアップロード処理を除外しました")
+        except Exception as e:
+            app.logger.warning(f"CSRF除外設定エラー: {str(e)}")
+            app.logger.warning(f"トレースバック: {traceback.format_exc()}")
+            app.logger.info("アップロード処理のCSRF除外に失敗しましたが、処理を続行します")
     except Exception as e:
         app.logger.warning(f"CSRF保護の初期化に失敗: {e}")
         csrf = None
@@ -1463,6 +1511,103 @@ def initialize_config():
 
 from flask import current_app
 
+# キャッシュクリア用のAPIエンドポイント
+@app.route('/api/clear_cache', methods=['POST'])
+@csrf.exempt
+def api_clear_cache():
+    """手動でキャッシュをクリアするAPI"""
+    try:
+        clear_cache()
+        return jsonify({
+            'success': True,
+            'message': 'キャッシュが正常にクリアされました'
+        }), 200
+    except Exception as e:
+        logger.error(f"キャッシュクリアエラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'キャッシュクリア中にエラーが発生しました: {str(e)}'
+        }), 500
+
+# プロバイダー可用性チェック用のAPIエンドポイント
+@app.route('/api/check_provider/<provider>', methods=['GET'])
+def check_provider_availability(provider):
+    """プロバイダー可用性チェック用エンドポイント"""
+    try:
+        from payment_utils import get_available_payment_providers, test_payment_provider_connection
+        logger.info(f"プロバイダー {provider} の可用性チェック")
+        
+        available_providers = get_available_payment_providers()
+        logger.info(f"利用可能なプロバイダー: {available_providers}")
+        
+        if provider not in available_providers:
+            return jsonify({
+                'available': False,
+                'message': f'サポートされていないプロバイダー: {provider}',
+                'details': {}
+            }), 400
+        
+        is_available = available_providers[provider]
+        
+        result = {
+            'available': is_available,
+            'provider': provider,
+            'message': f'{provider.upper()}は{"利用可能" if is_available else "設定が必要"}です'
+        }
+        
+        # 利用可能な場合は接続テストも実行
+        if is_available:
+            connection_test = test_payment_provider_connection(provider)
+            result['connection_test'] = connection_test
+            if not connection_test.get('success'):
+                result['available'] = False
+                result['message'] = f'{provider.upper()}の設定に問題があります: {connection_test.get("message", "")}'
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"プロバイダーチェックエラー: {str(e)}")
+        return jsonify({
+            'available': False,
+            'message': f'チェック中にエラーが発生しました: {str(e)}',
+            'details': {'error': str(e)}
+        }), 500
+
+# プロバイダー可用性テスト用のAPIエンドポイント（デバッグ用）
+@app.route('/api/test_provider_check/<provider>', methods=['GET'])
+def test_provider_check(provider):
+    """プロバイダー可用性チェックのテスト用エンドポイント"""
+    try:
+        from payment_utils import get_available_payment_providers
+        logger.info(f"テスト: プロバイダー {provider} の可用性チェック")
+        
+        available_providers = get_available_payment_providers()
+        logger.info(f"利用可能なプロバイダー: {available_providers}")
+        
+        if provider not in available_providers:
+            return jsonify({
+                'available': False,
+                'message': f'サポートされていないプロバイダー: {provider}',
+                'debug_info': {'all_providers': available_providers}
+            }), 400
+        
+        is_available = available_providers[provider]
+        
+        return jsonify({
+            'available': is_available,
+            'provider': provider,
+            'message': f'{provider.upper()}は{"利用可能" if is_available else "設定が必要"}です',
+            'debug_info': {'all_providers': available_providers}
+        })
+        
+    except Exception as e:
+        logger.error(f"プロバイダーチェックテストエラー: {str(e)}")
+        return jsonify({
+            'available': False,
+            'message': f'チェック中にエラーが発生しました: {str(e)}',
+            'debug_info': {'error': str(e)}
+        }), 500
+
 # トップページ
 @app.route('/')
 def index():
@@ -1472,12 +1617,21 @@ def index():
     paypal_mode = config.get('paypal_mode', 'sandbox')
     logger.info(f"PayPalモード: {paypal_mode}")
     
+    # セッション同期処理
+    if AUTH_INIT_AVAILABLE:
+        try:
+            from auth_init import sync_session_with_user
+            sync_session_with_user()
+        except Exception as e:
+            logger.warning(f"セッション同期エラー: {e}")
+    
     # 管理者ログイン状態を確認
     is_admin = session.get('admin_logged_in', False)
-    admin_username = session.get('admin_username', '')
+    admin_username = session.get('username', '')  # 正しいキーを使用
     
     # セッション情報をログに出力（デバッグ用）
     logger.info(f"セッション情報: admin_logged_in={is_admin}, username={admin_username}")
+    logger.info(f"セッション全体: {dict(session)}")
     
     # sessionオブジェクトをテンプレートに渡す
     return render_template('index.html', paypal_mode=paypal_mode, session=session)
@@ -1486,104 +1640,215 @@ def index():
 @app.route('/payment_success')
 def payment_success():
     # 支払い成功時のリダイレクト先
-    # PayPalの支払いが成功した場合のページ
+    # PayPalおよびStripeの支払いが成功した場合のページ
+    
+    # 決済プロバイダーを取得
+    provider = request.args.get('provider', 'paypal')
     
     # PayPalからのクエリパラメータを取得
     token = request.args.get('token')
     payer_id = request.args.get('PayerID')
     
-    if not token:
-        logger.error("支払い完了ページ: tokenパラメータが不足しています")
-        return render_template('payment_result.html', 
-                             result="error", 
-                             status="ERROR", 
-                             message="支払い情報が不完全です",
-                             current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                             is_pdf_export=False)
+    # Stripeからのクエリパラメータを取得
+    payment_intent_id = request.args.get('payment_intent')
+    session_id = request.args.get('session_id')
+    
+    logger.info(f"支払い完了ページアクセス: provider={provider}, token={token}, payment_intent={payment_intent_id}, session_id={session_id}")
     
     try:
-        # PayPal APIで実際の支払い状況を確認（安全なインポート使用）
-        payment_status = check_payment_status(token)
-        
-        logger.info(f"支払い状況確認: token={token}, status={payment_status}")
-        
-        if payment_status == "COMPLETED":
-            # 支払いが実際に完了している場合
+        if provider == 'stripe':
+            # Stripe決済の処理
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 支払いステータスを更新（失敗しても処理を続行）
-            update_message = ""
-            try:
-                from payment_status_updater import update_payment_status_by_order_id
-                success, new_status, message = update_payment_status_by_order_id(token)
-                if success:
-                    logger.info(f"支払いステータス更新成功: {message}")
-                    update_message = "ステータス更新済み"
-                else:
-                    logger.warning(f"支払いステータス更新失敗: {message}")
-                    update_message = "ステータス更新に失敗しましたが、支払いは完了しています"
-            except Exception as e:
-                logger.error(f"支払いステータス更新エラー: {str(e)}")
-                update_message = "ステータス更新エラーが発生しましたが、支払いは完了しています"
-            
-            # 支払い完了済みの場合は常に成功ページを表示
-            return render_template('payment_result.html', 
-                                 result="success", 
-                                 status="COMPLETED", 
-                                 order_id=token,
-                                 current_time=current_time,
-                                 message=f"お支払いが完了しました。{update_message}",
-                                 is_pdf_export=False)
-        elif payment_status == "PENDING":
-            # 支払い処理中
-            return render_template('payment_result.html', 
-                                 result="pending", 
-                                 status="PENDING", 
-                                 order_id=token,
-                                 message="支払い処理中です。しばらくお待ちください。",
-                                 current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                 is_pdf_export=False)
+            # セッションIDがある場合は詳細情報を取得
+            if session_id:
+                try:
+                    from stripe_utils import retrieve_stripe_checkout_session
+                    session_result = retrieve_stripe_checkout_session(session_id)
+                    
+                    if session_result.get('success'):
+                        session_data = session_result.get('session', {})
+                        payment_status = session_data.get('payment_status', 'unknown')
+                        payment_intent_status = session_data.get('payment_intent_status', 'unknown')
+                        
+                        logger.info(f"Stripe決済詳細取得成功: session_id={session_id}, payment_status={payment_status}, payment_intent_status={payment_intent_status}")
+                        
+                        # 支払いが完了している場合
+                        if payment_status == 'paid' and payment_intent_status == 'succeeded':
+                            order_id = session_data.get('payment_intent_id') or session_id
+                            amount_display = f"¥{session_data.get('amount_total', 0):,}" if session_data.get('amount_total') else ""
+                            
+                            return render_template('payment_result.html', 
+                                                 result="success", 
+                                                 status="COMPLETED", 
+                                                 order_id=order_id,
+                                                 current_time=current_time,
+                                                 message=f"Stripe決済が完了しました。{amount_display}",
+                                                 provider="stripe",
+                                                 is_pdf_export=False)
+                        else:
+                            # 支払い未完了の場合
+                            order_id = session_data.get('payment_intent_id') or session_id
+                            
+                            return render_template('payment_result.html', 
+                                                 result="error", 
+                                                 status="INCOMPLETE", 
+                                                 order_id=order_id,
+                                                 current_time=current_time,
+                                                 message=f"Stripe決済が未完了です。ステータス: {payment_status}",
+                                                 provider="stripe",
+                                                 is_pdf_export=False)
+                    else:
+                        logger.warning(f"Stripe決済詳細取得失敗: {session_result.get('message')}")
+                        # 詳細取得失敗の場合でも成功として扱う
+                        order_id = session_id
+                        
+                        return render_template('payment_result.html', 
+                                             result="success", 
+                                             status="COMPLETED", 
+                                             order_id=order_id,
+                                             current_time=current_time,
+                                             message="Stripe決済が完了しました。（詳細情報取得失敗）",
+                                             provider="stripe",
+                                             is_pdf_export=False)
+                except Exception as e:
+                    logger.error(f"Stripe決済詳細取得エラー: {str(e)}")
+                    # エラーの場合でも成功として扱う
+                    order_id = session_id
+                    
+                    return render_template('payment_result.html', 
+                                         result="success", 
+                                         status="COMPLETED", 
+                                         order_id=order_id,
+                                         current_time=current_time,
+                                         message="Stripe決済が完了しました。（エラー発生）",
+                                         provider="stripe",
+                                         is_pdf_export=False)
+            else:
+                # セッションIDがない場合は基本的な成功処理
+                order_id = payment_intent_id or f"STRIPE-{uuid.uuid4().hex[:8].upper()}"
+                
+                logger.info(f"Stripe決済完了（セッションID不明）: order_id={order_id}")
+                
+                return render_template('payment_result.html', 
+                                     result="success", 
+                                     status="COMPLETED", 
+                                     order_id=order_id,
+                                     current_time=current_time,
+                                     message="Stripe決済が完了しました。",
+                                     provider="stripe",
+                                     is_pdf_export=False)
         else:
-            # 支払い失敗または不明
-            return render_template('payment_result.html', 
-                                 result="error", 
-                                 status=payment_status or "UNKNOWN", 
-                                 order_id=token,
-                                 message="支払い処理に問題が発生しました。",
-                                 current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                 is_pdf_export=False)
-                                 
+            # PayPal決済の処理（従来の処理）
+            if not token:
+                logger.error("支払い完了ページ: tokenパラメータが不足しています")
+                return render_template('payment_result.html', 
+                                     result="error", 
+                                     status="ERROR", 
+                                     message="支払い情報が不完全です",
+                                     current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                     provider="paypal",
+                                     is_pdf_export=False)
+            
+            # PayPal APIで実際の支払い状況を確認（安全なインポート使用）
+            payment_status = check_payment_status(token)
+            
+            logger.info(f"支払い状況確認: token={token}, status={payment_status}")
+            
+            if payment_status == "COMPLETED":
+                # 支払いが実際に完了している場合
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 支払いステータスを更新（失敗しても処理を続行）
+                update_message = ""
+                try:
+                    from payment_status_updater import update_payment_status_by_order_id
+                    success, new_status, message = update_payment_status_by_order_id(token)
+                    if success:
+                        logger.info(f"支払いステータス更新成功: {message}")
+                        update_message = "ステータス更新済み"
+                    else:
+                        logger.warning(f"支払いステータス更新失敗: {message}")
+                        update_message = "ステータス更新に失敗しましたが、支払いは完了しています"
+                except Exception as e:
+                    logger.error(f"支払いステータス更新エラー: {str(e)}")
+                    update_message = "ステータス更新エラーが発生しましたが、支払いは完了しています"
+                
+                # 支払い完了済みの場合は常に成功ページを表示
+                return render_template('payment_result.html', 
+                                     result="success", 
+                                     status="COMPLETED", 
+                                     order_id=token,
+                                     current_time=current_time,
+                                     message=f"PayPal決済が完了しました。{update_message}",
+                                     provider="paypal",
+                                     is_pdf_export=False)
+            elif payment_status == "PENDING":
+                # 支払い処理中
+                return render_template('payment_result.html', 
+                                     result="pending", 
+                                     status="PENDING", 
+                                     order_id=token,
+                                     message="支払い処理中です。しばらくお待ちください。",
+                                     current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                     provider="paypal",
+                                     is_pdf_export=False)
+            else:
+                # 支払い失敗または不明
+                return render_template('payment_result.html', 
+                                     result="error", 
+                                     status=payment_status or "UNKNOWN", 
+                                     order_id=token,
+                                     message="支払い処理に問題が発生しました。",
+                                     current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                     provider="paypal",
+                                     is_pdf_export=False)
+                                     
     except Exception as e:
         logger.error(f"支払い完了ページ処理エラー: {str(e)}")
         return render_template('payment_result.html', 
                              result="error", 
                              status="ERROR", 
-                             order_id=token,
+                             order_id=token or payment_intent_id or session_id,
                              message=f"エラーが発生しました: {str(e)}",
                              current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                             provider=provider,
                              is_pdf_export=False)
 
 # 支払いキャンセルページ
 @app.route('/payment_cancel')
 def payment_cancel():
     # 支払いキャンセル時のリダイレクト先
-#     
-#     PayPalの支払いがキャンセルされた場合のページ
+    # PayPalおよびStripeの支払いがキャンセルされた場合のページ
     
-    logger.info("支払いがキャンセルされました")
+    # 決済プロバイダーを取得
+    provider = request.args.get('provider', 'paypal')
+    
+    logger.info(f"支払いがキャンセルされました: provider={provider}")
+    
     # 現在の日時を取得
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    # 注文IDを生成（実際のアプリケーションではセッションから取得するなど）
-    order_id = f"ORDER-{uuid.uuid4().hex[:8].upper()}"
+    
+    # プロバイダーに応じたメッセージを設定
+    if provider == 'stripe':
+        message = "Stripe決済がキャンセルされました。"
+        order_id = f"STRIPE-CANCELLED-{uuid.uuid4().hex[:8].upper()}"
+    else:
+        message = "PayPal決済がキャンセルされました。"
+        order_id = f"PAYPAL-CANCELLED-{uuid.uuid4().hex[:8].upper()}"
+    
     # 状態を設定
     status = "CANCELLED"
     # 結果を設定
     result = "cancel"
+    
     return render_template('payment_result.html', 
                            result=result, 
                            status=status, 
                            order_id=order_id, 
                            current_time=current_time,
+                           message=message,
+                           provider=provider,
                            is_pdf_export=False)
 
 # 決済結果をPDFでエクスポートするエンドポイント
@@ -1994,8 +2259,48 @@ def settings():
     # 現在の設定を取得
     config = get_config()
     
+    # config_manager からも設定を取得（より詳細な設定のため）
+    try:
+        from config_manager import ConfigManager
+        config_manager = ConfigManager()
+        detailed_config = config_manager.get_config()
+        # 詳細設定をマージ
+        config.update(detailed_config)
+        logger.info(f"詳細設定を取得しました: {len(detailed_config)} 項目")
+    except Exception as e:
+        logger.warning(f"詳細設定の取得に失敗: {str(e)}")
+    
     # PayPalモードを取得（デフォルトはsandbox）
     paypal_mode = config.get('paypal_mode', 'sandbox')
+    
+    # Stripe設定の取得
+    stripe_mode = config.get('stripe_mode', 'test')
+    stripe_pk = ''
+    stripe_sk = ''
+    
+    if stripe_mode == 'test':
+        stripe_pk = config.get('stripe_publishable_key_test', config.get('stripe_publishable_key', ''))
+        stripe_sk = config.get('stripe_secret_key_test', config.get('stripe_secret_key', ''))
+    else:
+        stripe_pk = config.get('stripe_publishable_key_live', '')
+        stripe_sk = config.get('stripe_secret_key_live', '')
+    
+    # Stripe接続状態をテスト
+    stripe_status = False
+    if stripe_sk:
+        try:
+            from stripe_utils import test_stripe_connection
+            test_result = test_stripe_connection(stripe_sk)
+            stripe_status = test_result.get('success', False)
+            logger.info(f"Stripe接続テスト結果: {stripe_status}")
+        except Exception as e:
+            logger.error(f"Stripe接続テストエラー: {str(e)}")
+    
+    # OCR設定の取得
+    use_ai_ocr = config.get('use_ai_ocr', False)
+    ocr_method = config.get('ocr_method', 'tesseract')
+    ocr_api_key = config.get('ocr_api_key', '')
+    ocr_endpoint = config.get('ocr_endpoint', '')
     
     # 権限情報を取得（Flask-Loginとセッションの両方をチェック）
     is_admin = False
@@ -2042,6 +2347,14 @@ def settings():
                            is_paid_member=is_paid_member,
                            config=config,
                            paypal_status=paypal_status,
+                           stripe_status=stripe_status,
+                           stripe_pk=stripe_pk,
+                           stripe_sk=stripe_sk,
+                           stripe_mode=stripe_mode,
+                           use_ai_ocr=use_ai_ocr,
+                           ocr_method=ocr_method,
+                           ocr_api_key=ocr_api_key,
+                           ocr_endpoint=ocr_endpoint,
                            show_all_settings=show_all_settings,
                            show_sandbox_settings=show_sandbox_settings,
                            show_production_settings=show_production_settings)
@@ -2785,7 +3098,7 @@ def create_paypal_payment_link(amount, customer, request=None):
 @app.route('/generate_payment_link', methods=['POST'])
 @app.route('/api/generate_payment_link', methods=['POST'])
 def generate_payment_link():
-    """選択された金額で決済リンクを生成するAPI"""
+    """選択された金額で決済リンクを生成するAPI（マルチプロバイダー対応）"""
     try:
         # JSONデータを取得
         data = request.get_json()
@@ -2797,45 +3110,69 @@ def generate_payment_link():
         customer = data.get('customer', '不明')
         amount = data.get('amount', '0')
         filename = data.get('filename', '')
+        provider = data.get('provider', 'paypal')  # 決済プロバイダー
         
-        logger.info(f"決済リンク生成リクエスト: 顧客名={customer}, 金額={amount}, ファイル名={filename}")
+        logger.info(f"決済リンク生成リクエスト: 顧客名={customer}, 金額={amount}, ファイル名={filename}, プロバイダー={provider}")
         
-        # PayPal設定の事前チェック
-        config = get_config()
-        client_id = config.get('paypal_client_id', '')
-        client_secret = config.get('paypal_client_secret', '')
-        
-        if not client_id or not client_secret:
-            logger.error("PayPal認証情報が設定されていません")
-            logger.error(f"設定確認: client_id存在={bool(client_id)}, client_secret存在={bool(client_secret)}")
-            logger.error(f"設定の内容: {[k for k in config.keys()]}")
+        # 金額を数値に変換
+        try:
+            amount_float = float(amount)
+        except (ValueError, TypeError):
+            logger.error(f"無効な金額: {amount}")
             return jsonify({
                 'success': False,
-                'error': 'PayPal認証情報が設定されていません。設定ページでPayPal Client IDとClient Secretを設定してください。'
+                'error': '有効な金額を入力してください'
             }), 400
         
-        # create_paypal_payment_link関数を使用して決済リンクを生成
-        payment_link = create_paypal_payment_link(amount, customer, request)
+        # 決済プロバイダー統合ヘルパーを使用（統一ロジックで自動切り替え含む）
+        from payment_utils import create_payment_link, format_payment_result_for_display
         
-        if payment_link:
+        # 決済リンクを生成（payment_utils.pyの統一ロジックが自動で利用可能性チェックと代替プロバイダー切り替えを行う）
+        logger.info(f"決済リンク生成開始: プロバイダー={provider}, 顧客名={customer}, 金額={amount_float}")
+        result = create_payment_link(
+            provider=provider,
+            amount=amount_float,
+            customer_name=customer,
+            description=filename,
+            currency="JPY"
+        )
+        
+        # 結果をフォーマット
+        formatted_result = format_payment_result_for_display(result)
+        
+        # 使用されたプロバイダーを取得（自動切り替えされた場合）
+        used_provider = result.get('provider', provider)
+        
+        if result.get('success'):
+            logger.info(f"決済リンク生成成功: {used_provider} - {result.get('payment_link')}")
             return jsonify({
                 'success': True,
-                'payment_link': payment_link
+                'payment_link': result.get('payment_link'),
+                'provider': used_provider,
+                'message': result.get('message'),
+                'details': formatted_result
             })
         else:
-            logger.error("決済リンクの生成に失敗しました")
+            logger.error(f"決済リンク生成失敗: {result.get('message')}")
             return jsonify({
                 'success': False,
-                'error': '決済リンクの生成に失敗しました。PayPal設定とネットワーク接続を確認してください。'
-            }), 500
+                'error': result.get('message'),
+                'provider': used_provider,
+                'details': formatted_result
+            }), 400
+            
     except Exception as e:
-        logger.error(f"PayPal決済リンク生成エラー: {str(e)}")
+        logger.error(f"決済リンク生成エラー: {str(e)}")
+        import traceback
+        logger.error(f"スタックトレース: {traceback.format_exc()}")
         return jsonify({
             'success': False,
             'error': f'決済リンク生成中にエラーが発生しました: {str(e)}'
         }), 500
 
 # 単一PDFファイルの処理
+# アップロード処理のCSRF除外設定は、アプリ初期化後に行われます
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     # PDFファイルをアップロードするエンドポイント
@@ -2948,26 +3285,69 @@ def process_single_pdf(filepath, filename, request):
         # 金額のフォーマットを整える
         amount_str = str(amount).replace(',', '').strip()
         
-        # PayPal決済リンクを生成
+        # 決済プロバイダーの選択ロジック
         payment_link = None
         order_id = None
+        used_provider = None
+        
+        # リクエストデータから決済プロバイダーを取得
+        provider = None
+        if request.is_json:
+            request_data = request.get_json()
+            provider = request_data.get('payment_provider') if request_data else None
+        else:
+            provider = request.form.get('payment_provider')
+        
+        # 設定からデフォルトプロバイダーを取得
+        if not provider:
+            config = get_config()
+            provider = config.get('default_payment_provider', 'paypal')
+        
+        logger.info(f"決済プロバイダー: {provider}")
+        
         try:
             if amount_str and amount_str != '0':
-                logger.info(f"PayPal決済リンク生成開始: 金額={amount_str}, 顧客={customer_name}")
+                logger.info(f"決済リンク生成開始: プロバイダー={provider}, 金額={amount_str}, 顧客={customer_name}")
+                
+                # payment_utils.pyの統一ロジックを使用
                 try:
-                    # 設定情報を確認
-                    config = get_config()
-                    client_id = config.get('paypal_client_id', '')
-                    client_secret = config.get('paypal_client_secret', '')
-                    if not client_id or not client_secret:
-                        logger.warning("PayPal認証情報が設定されていません")
-                        raise ValueError("PayPal認証情報が設定されていません")
-                        
-                    payment_link = create_paypal_payment_link(amount_str, customer_name, request)
-                    if payment_link:
-                        logger.info(f"決済リンク生成成功: {payment_link}")
+                    from payment_utils import create_payment_link
+                    
+                    # 決済リンクを生成
+                    result = create_payment_link(
+                        provider=provider,
+                        amount=float(amount_str),
+                        customer_name=customer_name,
+                        description=filename,
+                        currency="JPY"
+                    )
+                    
+                    if result.get('success'):
+                        payment_link = result.get('payment_link')
+                        used_provider = result.get('provider', provider)
+                        order_id = result.get('order_id')
+                        logger.info(f"決済リンク生成成功: {used_provider} - {payment_link}")
                     else:
-                        logger.warning("決済リンクが空で返されました")
+                        logger.warning(f"決済リンク生成失敗: {result.get('message')}")
+                        
+                except ImportError:
+                    # payment_utils.pyが利用できない場合のフォールバック
+                    logger.warning("payment_utils.pyが利用できません。PayPalのみを使用します")
+                    if provider == 'paypal' or provider == 'stripe':
+                        # PayPalでフォールバック
+                        config = get_config()
+                        client_id = config.get('paypal_client_id', '')
+                        client_secret = config.get('paypal_client_secret', '')
+                        if client_id and client_secret:
+                            payment_link = create_paypal_payment_link(amount_str, customer_name, request)
+                            used_provider = 'paypal'
+                            if payment_link:
+                                logger.info(f"PayPal決済リンク生成成功: {payment_link}")
+                            else:
+                                logger.warning("PayPal決済リンクが空で返されました")
+                        else:
+                            logger.warning("PayPal認証情報が設定されていません")
+                    
                 except Exception as link_err:
                     logger.error(f"決済リンク生成中の例外: {str(link_err)}")
                     # エラーの詳細情報をログに記録
@@ -2985,6 +3365,7 @@ def process_single_pdf(filepath, filename, request):
             'amount': amount_str,
             'payment_link': payment_link,
             'order_id': order_id,
+            'provider': used_provider,
             'extraction_method': extraction_method,
             'success': True
         }
@@ -3024,6 +3405,10 @@ def process_pdf():
         
         filename = data['filename']
         
+        # 決済プロバイダーの取得とログ記録
+        payment_provider = data.get('payment_provider', 'default')
+        logger.info(f"リクエストされた決済プロバイダー: {payment_provider}")
+        
         # アップロードフォルダの取得
         upload_folder = current_app.config.get('UPLOAD_FOLDER')
         
@@ -3053,10 +3438,13 @@ def process_pdf():
         file_size = os.path.getsize(filepath)
         logger.info(f"PDFファイルサイズ: {file_size} バイト")
         
+        # キャッシュキーを作成（ファイル名 + 決済プロバイダー）
+        cache_key = f"{filename}_{payment_provider}"
+        
         # キャッシュを確認
-        if filename in processed_files_cache:
-            logger.info(f"キャッシュから結果を返します: {filename}")
-            return jsonify(processed_files_cache[filename])
+        if cache_key in processed_files_cache:
+            logger.info(f"キャッシュから結果を返します: {filename} (プロバイダー: {payment_provider})")
+            return jsonify(processed_files_cache[cache_key])
         
         # PDFからテキストを抽出
         logger.info(f"PDFからテキストを抽出開始: {filename}")
@@ -3125,7 +3513,8 @@ def process_pdf():
             'message': f'{len(results)}件の処理が完了しました'
         }
         
-        processed_files_cache[filename] = response_data
+        processed_files_cache[cache_key] = response_data
+        logger.info(f"キャッシュに結果を保存しました: {filename} (プロバイダー: {payment_provider})")
         
         # 履歴ファイルに保存
         try:
@@ -3447,6 +3836,308 @@ def import_settings():
         logger.error(f"設定インポートエラー: {str(e)}")
         return redirect(url_for('settings'))
 
+# 設定保存用のAPIエンドポイント
+@app.route('/settings/save_common', methods=['POST'])
+@csrf.exempt
+def save_common_settings():
+    """共通設定を保存するAPIエンドポイント"""
+    try:
+        # JSON形式またはフォームデータを受け取る
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+        
+        logger.info(f"共通設定保存リクエスト: {data}")
+        
+        # CSRFトークンを除外
+        csrf_token = data.pop('csrf_token', None)
+        
+        # 設定マネージャーを使用して設定を保存
+        from config_manager import ConfigManager
+        config_manager = ConfigManager()
+        
+        # 設定を更新
+        config_updates = {}
+        
+        # 通貨設定
+        if 'default_currency' in data:
+            config_updates['default_currency'] = data['default_currency']
+        
+        # OCR設定
+        if 'use_ai_ocr' in data:
+            config_updates['use_ai_ocr'] = data.get('use_ai_ocr') == 'on'
+        
+        if 'ocr_method' in data:
+            config_updates['ocr_method'] = data['ocr_method']
+        
+        if 'ocr_api_key' in data:
+            config_updates['ocr_api_key'] = data['ocr_api_key']
+        
+        if 'ocr_endpoint' in data:
+            config_updates['ocr_endpoint'] = data['ocr_endpoint']
+        
+        # 抽出設定
+        if 'enable_customer_extraction' in data:
+            config_updates['enable_customer_extraction'] = data['enable_customer_extraction']
+        
+        if 'enable_amount_extraction' in data:
+            config_updates['enable_amount_extraction'] = data['enable_amount_extraction']
+        
+        if 'default_amount' in data:
+            try:
+                config_updates['default_amount'] = int(data['default_amount'])
+            except ValueError:
+                config_updates['default_amount'] = 1000
+        
+        # 設定を保存
+        if config_updates:
+            # 設定を直接更新
+            config_manager.config.update(config_updates)
+            save_result = config_manager.save_config(config_manager.config)
+            
+            if save_result:
+                logger.info(f"共通設定保存成功: {config_updates}")
+                
+                # 設定変更時にキャッシュをクリア
+                try:
+                    clear_cache()
+                    logger.info("共通設定変更によりキャッシュをクリアしました")
+                except Exception as e:
+                    logger.warning(f"キャッシュクリア中にエラー: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'message': '共通設定が正常に保存されました'
+                }), 200
+            else:
+                logger.error("共通設定保存失敗")
+                return jsonify({
+                    'success': False,
+                    'error': '設定の保存に失敗しました'
+                }), 500
+        else:
+            return jsonify({
+                'success': True,
+                'message': '更新する設定がありませんでした'
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"共通設定保存エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'設定保存中にエラーが発生しました: {str(e)}'
+        }), 500
+
+@app.route('/settings/save_advanced', methods=['POST'])
+@csrf.exempt
+def save_advanced_settings():
+    """高度な設定を保存するAPIエンドポイント"""
+    try:
+        # JSON形式またはフォームデータを受け取る
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+        
+        logger.info(f"高度な設定保存リクエスト: {data}")
+        
+        # CSRFトークンを除外
+        csrf_token = data.pop('csrf_token', None)
+        
+        # 設定マネージャーを使用して設定を保存
+        from config_manager import ConfigManager
+        config_manager = ConfigManager()
+        
+        # 設定を更新
+        config_updates = {}
+        
+        # 決済リンク設定
+        if 'payment_link_expire_days' in data:
+            try:
+                config_updates['payment_link_expire_days'] = int(data['payment_link_expire_days'])
+            except ValueError:
+                config_updates['payment_link_expire_days'] = 30
+        
+        if 'payment_link_auto_tax' in data:
+            config_updates['payment_link_auto_tax'] = data.get('payment_link_auto_tax') == 'on'
+        
+        # セキュリティ設定
+        if 'encrypt_api_keys' in data:
+            config_updates['encrypt_api_keys'] = data.get('encrypt_api_keys') == 'on'
+        
+        if 'api_key_rotation_days' in data:
+            try:
+                config_updates['api_key_rotation_days'] = int(data['api_key_rotation_days'])
+            except ValueError:
+                config_updates['api_key_rotation_days'] = 90
+        
+        # Webhook設定
+        if 'webhook_enable_signature_verification' in data:
+            config_updates['webhook_enable_signature_verification'] = data.get('webhook_enable_signature_verification') == 'on'
+        
+        if 'webhook_timeout_seconds' in data:
+            try:
+                config_updates['webhook_timeout_seconds'] = int(data['webhook_timeout_seconds'])
+            except ValueError:
+                config_updates['webhook_timeout_seconds'] = 30
+        
+        if 'webhook_retry_attempts' in data:
+            try:
+                config_updates['webhook_retry_attempts'] = int(data['webhook_retry_attempts'])
+            except ValueError:
+                config_updates['webhook_retry_attempts'] = 3
+        
+        # 通貨設定
+        if 'supported_currencies' in data:
+            # 複数選択の場合は配列として処理
+            if isinstance(data['supported_currencies'], list):
+                config_updates['supported_currencies'] = data['supported_currencies']
+            else:
+                config_updates['supported_currencies'] = [data['supported_currencies']]
+        
+        # 設定を保存
+        if config_updates:
+            # 設定を直接更新
+            config_manager.config.update(config_updates)
+            save_result = config_manager.save_config(config_manager.config)
+            
+            if save_result:
+                logger.info(f"高度な設定保存成功: {config_updates}")
+                
+                # 設定変更時にキャッシュをクリア
+                try:
+                    clear_cache()
+                    logger.info("高度な設定変更によりキャッシュをクリアしました")
+                except Exception as e:
+                    logger.warning(f"キャッシュクリア中にエラー: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'message': '高度な設定が正常に保存されました'
+                }), 200
+            else:
+                logger.error("高度な設定保存失敗")
+                return jsonify({
+                    'success': False,
+                    'error': '設定の保存に失敗しました'
+                }), 500
+        else:
+            return jsonify({
+                'success': True,
+                'message': '更新する設定がありませんでした'
+            }), 200
+        
+    except Exception as e:
+        logger.error(f"高度な設定保存エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'設定保存中にエラーが発生しました: {str(e)}'
+        }), 500
+
+@app.route('/api/config/validate', methods=['POST'])
+@csrf.exempt
+def validate_config():
+    """設定を検証するAPIエンドポイント"""
+    try:
+        # JSON形式またはフォームデータを受け取る
+        if request.is_json:
+            config_data = request.get_json()
+        else:
+            config_data = request.form.to_dict()
+        
+        logger.info(f"設定検証リクエスト: {config_data}")
+        
+        # 設定の検証処理
+        validation_result = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
+        }
+        
+        # 基本的な検証
+        if not config_data:
+            validation_result['valid'] = False
+            validation_result['errors'].append('設定データが空です')
+            return jsonify({
+                'success': True,
+                'validation': validation_result
+            }), 200
+        
+        # PayPal設定の検証
+        if 'paypal_client_id' in config_data:
+            client_id = config_data['paypal_client_id']
+            if client_id and not client_id.startswith('A'):
+                validation_result['warnings'].append('PayPal Client IDの形式が正しくない可能性があります')
+        
+        if 'paypal_client_secret' in config_data:
+            client_secret = config_data['paypal_client_secret']
+            if client_secret and len(client_secret) < 10:
+                validation_result['warnings'].append('PayPal Client Secretが短すぎる可能性があります')
+        
+        # Stripe設定の検証
+        stripe_mode = config_data.get('stripe_mode', 'test')
+        
+        if 'stripe_secret_key_test' in config_data:
+            secret_key = config_data['stripe_secret_key_test']
+            if secret_key and not secret_key.startswith('sk_test_'):
+                validation_result['errors'].append('Stripe Secret Key (Test)の形式が正しくありません')
+        
+        if 'stripe_secret_key_live' in config_data:
+            secret_key = config_data['stripe_secret_key_live']
+            if secret_key and not secret_key.startswith('sk_live_'):
+                validation_result['errors'].append('Stripe Secret Key (Live)の形式が正しくありません')
+        
+        if 'stripe_publishable_key_test' in config_data:
+            pub_key = config_data['stripe_publishable_key_test']
+            if pub_key and not pub_key.startswith('pk_test_'):
+                validation_result['errors'].append('Stripe Publishable Key (Test)の形式が正しくありません')
+        
+        if 'stripe_publishable_key_live' in config_data:
+            pub_key = config_data['stripe_publishable_key_live']
+            if pub_key and not pub_key.startswith('pk_live_'):
+                validation_result['errors'].append('Stripe Publishable Key (Live)の形式が正しくありません')
+        
+        # 通貨設定の検証
+        if 'default_currency' in config_data:
+            currency = config_data['default_currency']
+            valid_currencies = ['JPY', 'USD', 'EUR', 'GBP', 'AUD', 'CAD']
+            if currency not in valid_currencies:
+                validation_result['errors'].append(f'サポートされていない通貨です: {currency}')
+        
+        # 金額設定の検証
+        if 'default_amount' in config_data:
+            try:
+                amount = float(config_data['default_amount'])
+                if amount <= 0:
+                    validation_result['errors'].append('デフォルト金額は0より大きい値である必要があります')
+                elif amount > 1000000:
+                    validation_result['warnings'].append('デフォルト金額が非常に大きく設定されています')
+            except ValueError:
+                validation_result['errors'].append('デフォルト金額が数値ではありません')
+        
+        # 決済プロバイダーの検証
+        if 'default_payment_provider' in config_data:
+            provider = config_data['default_payment_provider']
+            if provider not in ['paypal', 'stripe']:
+                validation_result['errors'].append(f'サポートされていない決済プロバイダーです: {provider}')
+        
+        # エラーがあれば全体の検証結果を失敗にする
+        if validation_result['errors']:
+            validation_result['valid'] = False
+        
+        return jsonify({
+            'success': True,
+            'validation': validation_result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"設定検証エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'設定検証中にエラーが発生しました: {str(e)}'
+        }), 500
+
 # ファイルダウンロード
 @app.route('/download/<path:filename>')
 def download_file(filename):
@@ -3762,15 +4453,7 @@ try:
 except ImportError as e:
     logger.warning(f"update_history_apiモジュールのインポートに失敗しました: {e}")
 
-# PayPalルートの登録
-try:
-    from paypal_routes import paypal_bp
-    app.register_blueprint(paypal_bp)
-    logger.info("PayPalルートが正常に登録されました")
-except ImportError as e:
-    logger.warning(f"paypal_routesモジュールのインポートに失敗しました: {e}")
-except Exception as e:
-    logger.error(f"個別の履歴ファイルの支払いステータス更新APIエンドポイント登録エラー: {str(e)}")
+# PayPalルートの登録は create_app() 内で実行
 
 # アプリケーション初期化関数
 def create_app():

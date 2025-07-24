@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(find:*)",
+      "Bash(touch:*)",
+      "Bash(chmod:*)",
+      "Bash(mkdir:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

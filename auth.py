@@ -9,6 +9,8 @@
 import os
 import logging
 from flask import Blueprint, redirect, url_for, session, request, flash, render_template, current_app
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, BooleanField, validators
 from flask_login import LoginManager, login_user, logout_user, login_required, UserMixin, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
@@ -51,6 +53,12 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+# ログインフォームの定義
+class LoginForm(FlaskForm):
+    username = StringField('ユーザー名', [validators.DataRequired(message='ユーザー名は必須です')])
+    password = PasswordField('パスワード', [validators.DataRequired(message='パスワードは必須です')])
+    remember = BooleanField('ログイン状態を保持する')
+
 # ログインルート
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
@@ -58,16 +66,22 @@ def login():
     # ユーザーが既にログインしている場合はトップページにリダイレクト
     if current_user.is_authenticated:
         return redirect(url_for('index'))
-
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        remember = 'remember' in request.form
-
+        
+    # CSRFトークン検証を含むフォームの作成
+    form = LoginForm()
+    
+    # POSTリクエストとフォームのバリデーション
+    if request.method == 'POST' and form.validate_on_submit():
+        username = form.username.data
+        password = form.password.data
+        remember = form.remember.data
+        
+        logger.info(f"ログイン試行: {username}, CSRFトークン検証成功")
+        
         # 入力検証
         if not username or not password:
             flash('ユーザー名とパスワードを入力してください', 'danger')
-            return render_template('login.html')
+            return render_template('login.html', form=form)
 
         # ユーザー認証
         user = database.get_user_by_username(username)
@@ -88,8 +102,13 @@ def login():
         else:
             flash('ユーザー名またはパスワードが正しくありません', 'danger')
             logger.warning(f"ログイン失敗: {username}")
+    else:
+        # GETリクエストまたはPOSTリクエストでバリデーションエラーがあった場合
+        if request.method == 'POST' and not form.validate():
+            logger.warning(f"CSRFトークン検証失敗またはフォームバリデーションエラー: {form.errors}")
+            flash('CSRFトークンが無効かフォームの入力に問題があります', 'danger')
 
-    return render_template('login.html')
+    return render_template('login.html', form=form)
 
 # 新規登録ルート
 @auth_bp.route('/register', methods=['GET', 'POST'])
