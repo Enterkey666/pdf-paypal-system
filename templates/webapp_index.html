@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ config.app_title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .main-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        .upload-zone {
+            border: 3px dashed #007bff;
+            border-radius: 15px;
+            background-color: #f8f9ff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            min-height: 200px;
+        }
+        .upload-zone:hover {
+            border-color: #0056b3;
+            background-color: #e6f0ff;
+        }
+        .upload-zone.dragover {
+            border-color: #28a745;
+            background-color: #e6f7e6;
+        }
+        .btn-primary {
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            border: none;
+            border-radius: 10px;
+            padding: 12px 30px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: transform 0.3s ease;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
+        }
+        .feature-card {
+            background: white;
+            border-radius: 15px;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+        }
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+        .feature-icon {
+            font-size: 3rem;
+            color: #007bff;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: rgba(0, 0, 0, 0.1);">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
+                <i class="bi bi-file-earmark-pdf"></i> {{ config.app_title }}
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="{{ url_for('settings') }}">
+                    <i class="bi bi-gear"></i> 設定
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="main-card p-5">
+                    <div class="text-center mb-5">
+                        <h1 class="display-5 fw-bold text-primary mb-3">
+                            <i class="bi bi-file-earmark-pdf me-2"></i>
+                            PDF決済リンク生成
+                        </h1>
+                        <p class="lead text-muted">
+                            PDFファイルをアップロードして、自動的にPayPal決済リンクを生成します
+                        </p>
+                    </div>
+
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+                                    {{ message }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+
+                    <form method="POST" action="{{ url_for('upload_file') }}" enctype="multipart/form-data" id="uploadForm">
+                        <div class="upload-zone d-flex flex-column justify-content-center align-items-center p-5" id="uploadZone">
+                            <i class="bi bi-cloud-upload display-1 text-primary mb-3"></i>
+                            <h4 class="text-primary mb-3">PDFファイルをドラッグ＆ドロップ</h4>
+                            <p class="text-muted mb-3">または</p>
+                            <input type="file" name="file" id="fileInput" accept=".pdf" class="d-none" required>
+                            <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                <i class="bi bi-folder2-open me-2"></i>ファイルを選択
+                            </button>
+                            <div id="selectedFile" class="mt-3 text-success fw-bold" style="display: none;"></div>
+                        </div>
+                    </form>
+
+                    <div class="row mt-5">
+                        <div class="col-md-4">
+                            <div class="feature-card">
+                                <i class="bi bi-file-earmark-pdf feature-icon"></i>
+                                <h5>PDF解析</h5>
+                                <p class="text-muted small">
+                                    PDFから自動的に顧客情報と金額を抽出
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="feature-card">
+                                <i class="bi bi-paypal feature-icon"></i>
+                                <h5>PayPal連携</h5>
+                                <p class="text-muted small">
+                                    安全なPayPal決済リンクを自動生成
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="feature-card">
+                                <i class="bi bi-lightning feature-icon"></i>
+                                <h5>高速処理</h5>
+                                <p class="text-muted small">
+                                    数秒で決済リンクが完成
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ドラッグ&ドロップ機能
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const selectedFile = document.getElementById('selectedFile');
+        const uploadForm = document.getElementById('uploadForm');
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                updateSelectedFile();
+                uploadForm.submit();
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            updateSelectedFile();
+            if (fileInput.files.length > 0) {
+                uploadForm.submit();
+            }
+        });
+
+        function updateSelectedFile() {
+            if (fileInput.files.length > 0) {
+                selectedFile.textContent = `選択されたファイル: ${fileInput.files[0].name}`;
+                selectedFile.style.display = 'block';
+            } else {
+                selectedFile.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

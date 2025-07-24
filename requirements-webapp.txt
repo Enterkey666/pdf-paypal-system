@@ -1,0 +1,21 @@
+# PDF PayPal System Web Application Dependencies
+# Core web framework
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# PDF processing
+pdfplumber==0.9.0
+PyPDF2==3.0.1
+
+# HTTP requests for PayPal API
+requests==2.31.0
+
+# Configuration and environment
+python-dotenv==1.0.0
+
+# Security
+cryptography==41.0.4
+
+# Development and testing (optional)
+pytest==7.4.2
+pytest-flask==1.2.0

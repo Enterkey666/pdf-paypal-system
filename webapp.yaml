@@ -1,0 +1,26 @@
+# Google App Engine configuration for PDF PayPal System Web Application
+runtime: python39
+
+# Basic scaling configuration - suitable for third-party deployment
+automatic_scaling:
+  min_instances: 0
+  max_instances: 10
+  target_cpu_utilization: 0.6
+
+# Environment variables (can be overridden in deployment)
+env_variables:
+  SECRET_KEY: "pdf-paypal-web-app-secret-key-2025"
+  FLASK_ENV: "production"
+
+# Resource limits
+resources:
+  cpu: 1
+  memory_gb: 1
+  disk_size_gb: 10
+
+# Network settings
+network:
+  session_affinity: true
+
+# Instance configuration
+instance_class: F2
