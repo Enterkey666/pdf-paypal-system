@@ -39,9 +39,9 @@ class TestStripeAPIConnection:
         """テスト用のStripe設定"""
         return {
             'stripe_mode': 'test',
-            'stripe_secret_key_test': 'sk_test_4eC39HqLyjWDarjtT1zdp7dc',
-            'stripe_publishable_key_test': 'pk_test_TYooMQauvdEDq54NiTphI7jx',
-            'stripe_webhook_secret': 'whsec_test_secret'
+            'stripe_secret_key_test': 'sk_test_dummy_key_for_testing',
+            'stripe_publishable_key_test': 'pk_test_dummy_key_for_testing',
+            'stripe_webhook_secret': 'whsec_test_dummy_secret'
         }
     
     @pytest.fixture

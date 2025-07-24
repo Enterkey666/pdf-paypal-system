@@ -40,8 +40,8 @@ class TestFullWorkflow:
         """テスト用Stripe設定"""
         return {
             'stripe_mode': 'test',
-            'stripe_secret_key_test': 'sk_test_4eC39HqLyjWDarjtT1zdp7dc',
-            'stripe_publishable_key_test': 'pk_test_TYooMQauvdEDq54NiTphI7jx',
+            'stripe_secret_key_test': 'sk_test_dummy_key_for_testing',
+            'stripe_publishable_key_test': 'pk_test_dummy_key_for_testing',
             'default_payment_provider': 'stripe',
             'enabled_payment_providers': ['paypal', 'stripe']
         }

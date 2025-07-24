@@ -295,7 +295,7 @@ if __name__ == '__main__':
     config = SecurityConfig()
     
     # API キー暗号化テスト
-    test_key = "sk_test_4eC39HqLyjWDarjtT1zdp7dc"
+    test_key = os.getenv('TEST_API_KEY')
     encrypted = config.encrypt_api_key(test_key)
     decrypted = config.decrypt_api_key(encrypted)
     
@@ -305,7 +305,7 @@ if __name__ == '__main__':
     print(f"Match: {test_key == decrypted}")
     
     # マスキングテスト
-    sensitive_text = "API Key: sk_test_4eC39HqLyjWDarjtT1zdp7dc and password: secret123"
+    sensitive_text = "API Key: " + os.getenv('TEST_API_KEY') + " and password: secret123"
     masked = config.mask_sensitive_data(sensitive_text)
     print(f"Original: {sensitive_text}")
     print(f"Masked: {masked}")
