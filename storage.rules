@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // PDFファイル（ユーザーごと）
+    match /uploads/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // エクスポートファイル（ユーザーごと）
+    match /exports/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // 管理者のみアクセス可能
+    match /admin/{allPaths=**} {
+      allow read, write: if request.auth != null &&
+        request.auth.token.admin == true;
+    }
+  }
+}

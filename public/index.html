@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF PayPal System - Firebase Edition</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #fafafa;
+        }
+        .upload-area.dragover {
+            border-color: #007cba;
+            background-color: #f0f8ff;
+        }
+        .form-group {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: bold;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #007cba;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background-color: #005a87;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .results {
+            margin-top: 30px;
+            display: none;
+        }
+        .payment-link {
+            background: #e8f5e8;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 4px solid #28a745;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 4px solid #dc3545;
+        }
+        .loading {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007cba;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF PayPal System</h1>
+        <p style="text-align: center; color: #666;">
+            Firebase + Cloud Functions版<br>
+            PDFファイルから顧客情報・金額を抽出して決済リンクを生成
+        </p>
+
+        <form id="uploadForm">
+            <div class="upload-area" id="uploadArea">
+                <p>PDFファイルをドラッグ&ドロップするか、クリックしてファイルを選択</p>
+                <input type="file" id="fileInput" accept=".pdf" style="display: none;">
+            </div>
+
+            <div class="form-group">
+                <label for="paymentProvider">決済方法</label>
+                <select id="paymentProvider" required>
+                    <option value="stripe">Stripe</option>
+                    <option value="paypal">PayPal</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="currency">通貨</label>
+                <select id="currency" required>
+                    <option value="JPY">JPY (日本円)</option>
+                    <option value="USD">USD (米ドル)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="defaultAmount">デフォルト金額</label>
+                <input type="number" id="defaultAmount" min="1" value="1000" required>
+            </div>
+
+            <button type="submit" id="processBtn">PDF処理開始</button>
+            <button type="button" id="loginBtn">ログイン</button>
+        </form>
+
+        <div id="loading" class="loading" style="display: none;">
+            処理中です...
+        </div>
+
+        <div id="results" class="results">
+            <h2>処理結果</h2>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-functions-compat.js"></script>
+
+    <script>
+        // Firebase設定（実際の値に置き換えてください）
+        const firebaseConfig = {
+            apiKey: "your-api-key",
+            authDomain: "your-project.firebaseapp.com",
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "your-sender-id",
+            appId: "your-app-id"
+        };
+
+        // Firebase初期化
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const functions = firebase.functions();
+
+        // DOM要素
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadForm = document.getElementById('uploadForm');
+        const processBtn = document.getElementById('processBtn');
+        const loginBtn = document.getElementById('loginBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const resultContent = document.getElementById('resultContent');
+
+        // ファイルドラッグ&ドロップ
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                updateUploadArea();
+            }
+        });
+
+        fileInput.addEventListener('change', updateUploadArea);
+
+        function updateUploadArea() {
+            const file = fileInput.files[0];
+            if (file) {
+                uploadArea.innerHTML = `<p>選択されたファイル: ${file.name}</p>`;
+            }
+        }
+
+        // 認証状態の監視
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                loginBtn.textContent = 'ログアウト';
+                processBtn.disabled = false;
+            } else {
+                loginBtn.textContent = 'ログイン';
+                processBtn.disabled = true;
+            }
+        });
+
+        // ログイン/ログアウト
+        loginBtn.addEventListener('click', () => {
+            if (auth.currentUser) {
+                auth.signOut();
+            } else {
+                // 簡単な匿名ログイン
+                auth.signInAnonymously()
+                    .then(() => {
+                        showMessage('ログインしました', 'success');
+                    })
+                    .catch((error) => {
+                        showMessage('ログインエラー: ' + error.message, 'error');
+                    });
+            }
+        });
+
+        // フォーム送信
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                showMessage('PDFファイルを選択してください', 'error');
+                return;
+            }
+
+            if (!auth.currentUser) {
+                showMessage('ログインが必要です', 'error');
+                return;
+            }
+
+            showLoading(true);
+            results.style.display = 'none';
+
+            try {
+                // ファイルをBase64に変換
+                const fileData = await fileToBase64(file);
+                
+                // Cloud Functionを呼び出し
+                const processPdf = functions.httpsCallable('processPdf');
+                const result = await processPdf({
+                    fileData: fileData,
+                    fileName: file.name,
+                    paymentProvider: document.getElementById('paymentProvider').value,
+                    currency: document.getElementById('currency').value,
+                    defaultAmount: parseInt(document.getElementById('defaultAmount').value)
+                });
+
+                showResults(result.data);
+
+            } catch (error) {
+                console.error('処理エラー:', error);
+                showMessage('処理中にエラーが発生しました: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        });
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function showLoading(show) {
+            loading.style.display = show ? 'block' : 'none';
+            processBtn.disabled = show;
+        }
+
+        function showResults(data) {
+            results.style.display = 'block';
+            resultContent.innerHTML = '';
+
+            if (data.success) {
+                data.payments.forEach((payment, index) => {
+                    const paymentDiv = document.createElement('div');
+                    paymentDiv.className = 'payment-link';
+                    paymentDiv.innerHTML = `
+                        <h3>決済リンク ${index + 1}</h3>
+                        <p><strong>顧客:</strong> ${payment.customer || '不明'}</p>
+                        <p><strong>金額:</strong> ${payment.amount} ${payment.currency}</p>
+                        <p><strong>決済方法:</strong> ${payment.provider}</p>
+                        <p><a href="${payment.link}" target="_blank" style="color: #007cba;">決済ページを開く</a></p>
+                    `;
+                    resultContent.appendChild(paymentDiv);
+                });
+            } else {
+                showMessage(data.error || '処理に失敗しました', 'error');
+            }
+        }
+
+        function showMessage(message, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type === 'error' ? 'error' : 'payment-link';
+            messageDiv.textContent = message;
+            resultContent.appendChild(messageDiv);
+            results.style.display = 'block';
+        }
+
+        // 初期状態で匿名ログイン
+        window.addEventListener('load', () => {
+            if (!auth.currentUser) {
+                auth.signInAnonymously();
+            }
+        });
+    </script>
+</body>
+</html>

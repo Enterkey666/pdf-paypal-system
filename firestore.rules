@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ユーザー認証が必要
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // 支払い情報（ユーザーごと）
+    match /payments/{paymentId} {
+      allow read, write: if request.auth != null && 
+        resource.data.user_id == request.auth.uid;
+    }
+    
+    // PDF処理履歴（ユーザーごと）
+    match /pdf_history/{historyId} {
+      allow read, write: if request.auth != null && 
+        resource.data.user_id == request.auth.uid;
+    }
+    
+    // 管理者のみアクセス可能
+    match /admin/{document=**} {
+      allow read, write: if request.auth != null &&
+        request.auth.token.admin == true;
+    }
+  }
+}
