@@ -2,279 +2,225 @@
 # -*- coding: utf-8 -*-
 
 """
-Stripe Flask統合モジュール
-app.pyに統合するためのルート定義とブループリント登録
+Stripe Subscription Blueprint
+サブスクリプション管理用のBlueprint、Checkout、Portal、Webhookルート
 """
 
+import os
+import json
 import logging
-from flask import Flask
-from stripe_webhook import stripe_webhook_bp
-from stripe_routes import stripe_bp
-from provider_api_routes import provider_api_bp
+from flask import Blueprint, request, jsonify, redirect, session, current_app
+from flask_login import login_required, current_user
+from stripe_utils import (
+    create_subscription_checkout_session,
+    create_customer_portal_session,
+    verify_webhook_signature,
+    process_stripe_webhook,
+    get_stripe_keys
+)
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
 
-def register_stripe_blueprints(app: Flask) -> None:
+# Blueprint作成
+stripe_bp = Blueprint('stripe', __name__, url_prefix='/api/stripe')
+
+@stripe_bp.route('/checkout', methods=['POST'])
+@login_required
+def create_checkout():
     """
-    Stripe関連のブループリントをFlaskアプリに登録
+    サブスクリプションCheckout Session作成
     
-    Args:
-        app (Flask): Flaskアプリケーションインスタンス
+    Body: {"plan": "monthly" | "yearly"}
     """
     try:
-        # Stripe Webhook Blueprint登録
-        app.register_blueprint(stripe_webhook_bp)
-        logger.info("Stripe Webhook Blueprintを登録しました")
+        data = request.get_json()
+        if not data or 'plan' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'プランが指定されていません'
+            }), 400
         
-        # Stripe設定管理 Blueprint登録
-        app.register_blueprint(stripe_bp)
-        logger.info("Stripe設定管理 Blueprintを登録しました")
+        plan = data['plan']
+        if plan not in ['monthly', 'yearly']:
+            return jsonify({
+                'success': False,
+                'message': '無効なプランです'
+            }), 400
         
-        # 決済プロバイダーAPI Blueprint登録
-        app.register_blueprint(provider_api_bp)
-        logger.info("決済プロバイダーAPI Blueprintを登録しました")
+        # 成功/キャンセルURLを構築
+        base_url = request.host_url.rstrip('/')
+        success_url = f"{base_url}/payment_success?provider=stripe"
+        cancel_url = f"{base_url}/payment_cancel?provider=stripe"
+        
+        # Checkout Session作成
+        result = create_subscription_checkout_session(
+            user_id=current_user.id,
+            plan=plan,
+            success_url=success_url,
+            cancel_url=cancel_url
+        )
+        
+        if result['success']:
+            logger.info(f"Checkout Session作成: user_id={current_user.id}, plan={plan}")
+            return jsonify({
+                'success': True,
+                'checkout_url': result['checkout_url'],
+                'session_id': result.get('session_id')
+            })
+        else:
+            logger.error(f"Checkout Session作成失敗: {result['message']}")
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Checkout Session作成エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': '内部エラーが発生しました'
+        }), 500
+
+@stripe_bp.route('/portal', methods=['GET'])
+@login_required
+def customer_portal():
+    """
+    Stripe Customer Portalセッション作成とリダイレクト
+    """
+    try:
+        # 戻りURLを設定
+        return_url = os.environ.get('STRIPE_PORTAL_RETURN_URL')
+        if not return_url:
+            return_url = f"{request.host_url.rstrip('/')}/settings"
+        
+        # Portal Session作成
+        result = create_customer_portal_session(
+            user_id=current_user.id,
+            return_url=return_url
+        )
+        
+        if result['success']:
+            logger.info(f"Portal Session作成: user_id={current_user.id}")
+            return redirect(result['portal_url'])
+        else:
+            logger.error(f"Portal Session作成失敗: {result['message']}")
+            return jsonify({
+                'success': False,
+                'message': result['message']
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Portal Session作成エラー: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': '内部エラーが発生しました'
+        }), 500
+
+@stripe_bp.route('/webhook', methods=['POST'])
+def stripe_webhook():
+    """
+    Stripe Webhookエンドポイント
+    """
+    try:
+        # ペイロードと署名を取得
+        payload = request.get_data()
+        signature = request.headers.get('Stripe-Signature')
+        
+        if not signature:
+            logger.error("Webhook: Stripe-Signatureヘッダーがありません")
+            return jsonify({'error': 'Missing signature'}), 400
+        
+        # Webhook秘密鍵を取得
+        webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+        if not webhook_secret:
+            logger.error("Webhook: STRIPE_WEBHOOK_SECRETが設定されていません")
+            return jsonify({'error': 'Webhook secret not configured'}), 500
+        
+        # 署名検証
+        if not verify_webhook_signature(payload, signature, webhook_secret):
+            logger.error("Webhook: 署名検証失敗")
+            return jsonify({'error': 'Invalid signature'}), 400
+        
+        # イベントデータをパース
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.error("Webhook: 無効なJSONペイロード")
+            return jsonify({'error': 'Invalid JSON'}), 400
+        
+        # イベント処理
+        result = process_stripe_webhook(event)
+        
+        if result['success']:
+            logger.info(f"Webhook処理成功: {event.get('type')} - {result['message']}")
+            return jsonify({'received': True}), 200
+        else:
+            logger.error(f"Webhook処理失敗: {event.get('type')} - {result['message']}")
+            return jsonify({'error': result['message']}), 500
+            
+    except Exception as e:
+        logger.error(f"Webhookエラー: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@stripe_bp.route('/config', methods=['GET'])
+@login_required
+def get_stripe_config():
+    """
+    Stripe設定情報を取得（フロントエンド用）
+    """
+    try:
+        keys = get_stripe_keys()
+        
+        # フロントエンドに必要な情報のみ返す
+        return jsonify({
+            'publishable_key': keys['publishable_key'],
+            'mode': keys['mode'],
+            'configured': bool(keys['secret_key'] and keys['publishable_key'])
+        })
         
     except Exception as e:
-        logger.error(f"Stripe Blueprints登録エラー: {str(e)}")
+        logger.error(f"Stripe設定取得エラー: {str(e)}")
+        return jsonify({
+            'error': '設定取得エラー'
+        }), 500
+
+def register_stripe_blueprint(app):
+    """
+    Stripe Blueprintをアプリに登録
+    
+    Args:
+        app: Flaskアプリケーションインスタンス
+    """
+    try:
+        app.register_blueprint(stripe_bp)
+        logger.info("Stripe Blueprintが登録されました")
+    except Exception as e:
+        logger.error(f"Stripe Blueprint登録エラー: {str(e)}")
         raise
 
-def add_stripe_routes_to_existing_app(app: Flask) -> None:
+# 既存アプリとの統合用関数
+def integrate_with_existing_app(app):
     """
-    既存のFlaskアプリにStripe関連ルートを追加
+    既存のapp.pyとの統合
     
     Args:
-        app (Flask): 既存のFlaskアプリケーションインスタンス
+        app: Flaskアプリケーションインスタンス
     """
+    # Blueprint登録
+    register_stripe_blueprint(app)
     
-    @app.route('/api/stripe/test', methods=['GET', 'POST'])
-    def stripe_comprehensive_test():
+    # 既存の/payment_successルートでStripeセッションを処理
+    def handle_stripe_payment_success():
         """
-        Stripe機能の包括的テスト用エンドポイント
+        Stripe決済成功時の処理を既存ルートに統合
         """
-        try:
-            from flask import jsonify, request
-            
-            # JSON形式が要求されている場合は必ずJSONで応答
-            is_json_request = request.args.get('format') == 'json'
-            
-            try:
-                from stripe_test_utils import run_stripe_comprehensive_test, generate_test_report
-                
-                logger.info("Stripe包括的テスト実行")
-                
-                # テスト実行
-                test_results = run_stripe_comprehensive_test()
-                
-                # リクエスト形式に応じてレスポンスを変更
-                if is_json_request:
-                    # JSON形式でレスポンス
-                    return jsonify(test_results)
-                else:
-                    # HTMLレポート生成
-                    html_report = generate_test_report(test_results)
-                    from flask import render_template_string
-                    
-                    html_template = """
-                    <!DOCTYPE html>
-                    <html lang="ja">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>Stripe機能テストレポート</title>
-                        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-                        <style>
-                            .test-report { margin: 2rem; }
-                            .test-item { margin: 1rem 0; padding: 1rem; border: 1px solid #ddd; border-radius: 5px; }
-                            .test-summary { background: #f8f9fa; padding: 1rem; border-radius: 5px; margin-bottom: 2rem; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            {{ html_report|safe }}
-                            <div class="mt-4">
-                                <a href="/settings" class="btn btn-primary">設定画面に戻る</a>
-                                <a href="/api/stripe/test?format=json" class="btn btn-secondary">JSON形式で表示</a>
-                            </div>
-                        </div>
-                    </body>
-                    </html>
-                    """
-                    
-                    return render_template_string(html_template, html_report=html_report)
-                    
-            except ImportError as import_error:
-                logger.error(f"Stripe test utils インポートエラー: {str(import_error)}")
-                if is_json_request:
-                    return jsonify({
-                        'success': False,
-                        'error': f'テストモジュールのインポートに失敗しました: {str(import_error)}'
-                    }), 500
-                else:
-                    raise  # HTMLの場合は外側のexception handlerに委ねる
-                
-        except Exception as e:
-            logger.error(f"Stripe包括的テストエラー: {str(e)}")
-            # JSON要求の場合は必ずJSONで応答
-            if request.args.get('format') == 'json':
-                return jsonify({
-                    'success': False,
-                    'error': str(e)
-                }), 500
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': str(e)
-                }), 500
-    
-    @app.route('/api/stripe/config/validate', methods=['GET'])
-    def validate_stripe_config():
-        """
-        Stripe設定検証エンドポイント
-        """
-        try:
-            from stripe_utils import validate_stripe_configuration
-            from flask import jsonify
-            
-            result = validate_stripe_configuration()
-            
-            return jsonify(result)
-            
-        except Exception as e:
-            logger.error(f"Stripe設定検証エラー: {str(e)}")
-            return jsonify({
-                'valid': False,
-                'error': str(e)
-            }), 500
-    
-    @app.route('/api/stripe/payment_link', methods=['POST'])
-    def create_stripe_payment_link_api():
-        """
-        Stripe Payment Link作成API
-        """
-        try:
-            from stripe_utils import create_stripe_payment_link
-            from flask import request, jsonify
-            
-            # JSONデータを取得
-            data = request.get_json()
-            if not data:
-                return jsonify({
-                    'success': False,
-                    'message': 'リクエストデータが見つかりません'
-                }), 400
-            
-            # 必要なパラメータを取得
-            amount = data.get('amount')
-            customer_name = data.get('customer_name', '')
-            description = data.get('description', '')
-            currency = data.get('currency', 'jpy')
-            
-            # パラメータ検証
-            if not amount or amount <= 0:
-                return jsonify({
-                    'success': False,
-                    'message': '有効な金額を指定してください'
-                }), 400
-            
-            if not customer_name:
-                return jsonify({
-                    'success': False,
-                    'message': '顧客名を指定してください'
-                }), 400
-            
-            # Payment Link作成
-            result = create_stripe_payment_link(
-                amount=float(amount),
-                customer_name=customer_name,
-                description=description,
-                currency=currency
-            )
-            
-            return jsonify(result)
-            
-        except Exception as e:
-            logger.error(f"Stripe Payment Link作成APIエラー: {str(e)}")
-            return jsonify({
-                'success': False,
-                'message': f'Payment Link作成エラー: {str(e)}'
-            }), 500
-    
-    @app.route('/api/stripe/payment_link/from_ocr', methods=['POST'])
-    def create_stripe_payment_link_from_ocr_api():
-        """
-        OCRデータからStripe Payment Link作成API
-        """
-        try:
-            from payment_utils import create_payment_link_from_ocr
-            from flask import request, jsonify
-            
-            # JSONデータを取得
-            data = request.get_json()
-            if not data:
-                return jsonify({
-                    'success': False,
-                    'message': 'リクエストデータが見つかりません'
-                }), 400
-            
-            # 必要なパラメータを取得
-            ocr_data = data.get('ocr_data', {})
-            filename = data.get('filename', '')
-            override_amount = data.get('override_amount')
-            override_customer = data.get('override_customer')
-            
-            if not ocr_data:
-                return jsonify({
-                    'success': False,
-                    'message': 'OCRデータが見つかりません'
-                }), 400
-            
-            # OCRデータからPayment Link作成
-            result = create_payment_link_from_ocr(
-                provider='stripe',
-                ocr_data=ocr_data,
-                filename=filename,
-                override_amount=override_amount,
-                override_customer=override_customer
-            )
-            
-            return jsonify(result)
-            
-        except Exception as e:
-            logger.error(f"OCRからStripe Payment Link作成APIエラー: {str(e)}")
-            return jsonify({
-                'success': False,
-                'message': f'OCRからPayment Link作成エラー: {str(e)}'
-            }), 500
-    
-    logger.info("Stripe関連ルートを既存アプリに追加しました")
-
-# app.pyに追加するためのインポート文
-APP_PY_IMPORTS = """
-# Stripe統合のためのインポート
-try:
-    from stripe_flask_integration import register_stripe_blueprints, add_stripe_routes_to_existing_app
-    STRIPE_INTEGRATION_AVAILABLE = True
-    print("✓ Stripe統合モジュールのインポート成功")
-except ImportError as e:
-    print(f"⚠ Stripe統合モジュールのインポート失敗: {e}")
-    STRIPE_INTEGRATION_AVAILABLE = False
-"""
-
-# app.pyに追加するための統合コード
-APP_PY_INTEGRATION_CODE = """
-# Stripe統合の初期化
-if STRIPE_INTEGRATION_AVAILABLE:
-    try:
-        # Blueprintの登録
-        register_stripe_blueprints(app)
+        session_id = request.args.get('session_id')
+        provider = request.args.get('provider')
         
-        # 追加ルートの登録
-        add_stripe_routes_to_existing_app(app)
-        
-        logger.info("Stripe統合が正常に初期化されました")
-    except Exception as e:
-        logger.error(f"Stripe統合初期化エラー: {str(e)}")
-else:
-    logger.warning("Stripe統合が利用できません")
-"""
+        if provider == 'stripe' and session_id:
+            logger.info(f"Stripe決済成功: session_id={session_id}")
+            # セッションに成功メッセージを設定
+            session['payment_success_message'] = 'サブスクリプションの登録が完了しました。'
+    
+    return handle_stripe_payment_success

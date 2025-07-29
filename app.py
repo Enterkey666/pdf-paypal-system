@@ -664,6 +664,7 @@ def admin_required(f):
 def paid_member_or_admin_required(f):
     # 
 #     有料会員または管理者権限が必要なルート用のデコレータ
+#     新Stripe サブスクリプション対応（後方互換性維持）
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -682,7 +683,17 @@ def paid_member_or_admin_required(f):
         if session.get('admin_logged_in'):
             return f(*args, **kwargs)
         
-        # 有料会員かどうかチェック
+        # 新システム: Stripeサブスクリプション状態をチェック
+        if current_user and current_user.is_authenticated:
+            try:
+                from entitlements import check_legacy_paid_member_status
+                if check_legacy_paid_member_status(current_user.id):
+                    return f(*args, **kwargs)
+            except ImportError:
+                logger.warning("entitlements モジュールが利用できません。旧システムでチェックします。")
+                pass
+        
+        # 旧システム（後方互換性）: 有料会員かどうかチェック
         if current_user and hasattr(current_user, 'is_paid_member') and current_user.is_paid_member:
             return f(*args, **kwargs)
         

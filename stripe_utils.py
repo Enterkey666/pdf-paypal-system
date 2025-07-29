@@ -579,3 +579,670 @@ def get_stripe_webhook_events(limit: int = 10) -> Dict[str, Any]:
             'message': f'イベント取得エラー: {str(e)}',
             'events': []
         }
+
+# ==== Stripe Subscription 機能 ====
+
+def get_stripe_keys() -> Dict[str, str]:
+    """
+    環境変数からStripeキーを取得
+    
+    Returns:
+        Dict[str, str]: Stripeキー情報
+    """
+    return {
+        'secret_key': os.environ.get('STRIPE_SECRET_KEY', ''),
+        'publishable_key': os.environ.get('STRIPE_PUBLISHABLE_KEY', ''),
+        'webhook_secret': os.environ.get('STRIPE_WEBHOOK_SECRET', ''),
+        'price_monthly': os.environ.get('STRIPE_PRICE_MONTHLY', ''),
+        'price_yearly': os.environ.get('STRIPE_PRICE_YEARLY', ''),
+        'mode': 'test' if os.environ.get('STRIPE_SECRET_KEY', '').startswith('sk_test_') else 'live'
+    }
+
+def get_or_create_stripe_customer(user_id: int, email: str, name: str = None) -> Optional[str]:
+    """
+    Stripe顧客を取得または作成
+    
+    Args:
+        user_id (int): ユーザーID
+        email (str): メールアドレス
+        name (str): 顧客名
+        
+    Returns:
+        Optional[str]: Stripe Customer ID
+    """
+    try:
+        if not configure_stripe():
+            return None
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 既存のStripe Customer IDを確認
+        cursor.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (user_id,))
+        result = cursor.fetchone()
+        
+        if result and result['stripe_customer_id']:
+            try:
+                # 既存顧客の有効性を確認
+                customer = stripe.Customer.retrieve(result['stripe_customer_id'])
+                if not customer.deleted:
+                    return result['stripe_customer_id']
+            except stripe.error.InvalidRequestError:
+                logger.warning(f"無効なStripe Customer ID: {result['stripe_customer_id']}")
+        
+        # 新規顧客作成
+        customer_params = {
+            'email': email,
+            'metadata': {
+                'user_id': str(user_id),
+                'created_at': datetime.now().isoformat()
+            }
+        }
+        if name:
+            customer_params['name'] = name
+            
+        customer = stripe.Customer.create(**customer_params)
+        
+        # DBに保存
+        cursor.execute(
+            "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
+            (customer.id, user_id)
+        )
+        conn.commit()
+        
+        logger.info(f"新規Stripe顧客作成: {customer.id} (user_id: {user_id})")
+        return customer.id
+        
+    except Exception as e:
+        logger.error(f"Stripe顧客作成エラー: {str(e)}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def create_subscription_checkout_session(
+    user_id: int,
+    plan: str,  # 'monthly' or 'yearly'
+    success_url: str,
+    cancel_url: str
+) -> Dict[str, Any]:
+    """
+    サブスクリプション用Checkout Sessionを作成
+    
+    Args:
+        user_id (int): ユーザーID
+        plan (str): プラン ('monthly' or 'yearly')
+        success_url (str): 成功時リダイレクトURL
+        cancel_url (str): キャンセル時リダイレクトURL
+        
+    Returns:
+        Dict[str, Any]: Checkout Session情報
+    """
+    try:
+        if not configure_stripe():
+            return {
+                'success': False,
+                'message': 'Stripe設定エラー',
+                'checkout_url': None
+            }
+        
+        # 価格IDを環境変数から取得
+        if plan == 'monthly':
+            price_id = os.environ.get('STRIPE_PRICE_MONTHLY')
+        elif plan == 'yearly':
+            price_id = os.environ.get('STRIPE_PRICE_YEARLY')
+        else:
+            return {
+                'success': False,
+                'message': f'無効なプラン: {plan}',
+                'checkout_url': None
+            }
+        
+        if not price_id:
+            return {
+                'success': False,
+                'message': f'{plan}プランの価格IDが設定されていません',
+                'checkout_url': None
+            }
+        
+        # ユーザー情報を取得
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT email, username FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        conn.close()
+        
+        if not user:
+            return {
+                'success': False,
+                'message': 'ユーザーが見つかりません',
+                'checkout_url': None
+            }
+        
+        # Stripe顧客を取得または作成
+        customer_id = get_or_create_stripe_customer(
+            user_id, user['email'], user['username']
+        )
+        
+        if not customer_id:
+            return {
+                'success': False,
+                'message': 'Stripe顧客の作成に失敗しました',
+                'checkout_url': None
+            }
+        
+        # Checkout Session作成
+        session = stripe.checkout.Session.create(
+            mode='subscription',
+            customer=customer_id,
+            line_items=[{
+                'price': price_id,
+                'quantity': 1
+            }],
+            success_url=success_url + '?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url=cancel_url,
+            metadata={
+                'user_id': str(user_id),
+                'plan': plan
+            },
+            subscription_data={
+                'trial_period_days': 30,
+                'metadata': {
+                    'user_id': str(user_id),
+                    'plan': plan
+                }
+            }
+        )
+        
+        logger.info(f"Checkout Session作成成功: {session.id} (user_id: {user_id}, plan: {plan})")
+        
+        return {
+            'success': True,
+            'message': 'Checkout Session作成成功',
+            'checkout_url': session.url,
+            'session_id': session.id
+        }
+        
+    except Exception as e:
+        logger.error(f"Checkout Session作成エラー: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Checkout Session作成エラー: {str(e)}',
+            'checkout_url': None
+        }
+
+def create_customer_portal_session(user_id: int, return_url: str) -> Dict[str, Any]:
+    """
+    Customer Portal Sessionを作成
+    
+    Args:
+        user_id (int): ユーザーID
+        return_url (str): 戻りURL
+        
+    Returns:
+        Dict[str, Any]: Portal Session情報
+    """
+    try:
+        if not configure_stripe():
+            return {
+                'success': False,
+                'message': 'Stripe設定エラー',
+                'portal_url': None
+            }
+        
+        # ユーザーのStripe Customer IDを取得
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result or not result['stripe_customer_id']:
+            return {
+                'success': False,
+                'message': 'Stripe顧客情報が見つかりません',
+                'portal_url': None
+            }
+        
+        # Portal Session作成
+        session = stripe.billing_portal.Session.create(
+            customer=result['stripe_customer_id'],
+            return_url=return_url
+        )
+        
+        logger.info(f"Portal Session作成成功: {session.id} (user_id: {user_id})")
+        
+        return {
+            'success': True,
+            'message': 'Portal Session作成成功',
+            'portal_url': session.url
+        }
+        
+    except Exception as e:
+        logger.error(f"Portal Session作成エラー: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Portal Session作成エラー: {str(e)}',
+            'portal_url': None
+        }
+
+def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
+    """
+    Stripe Webhook署名を検証
+    
+    Args:
+        payload (bytes): Webhookペイロード
+        signature (str): Stripe署名ヘッダー
+        secret (str): Webhook秘密鍵
+        
+    Returns:
+        bool: 署名の有効性
+    """
+    try:
+        stripe.Webhook.construct_event(payload, signature, secret)
+        return True
+    except ValueError:
+        logger.error("Webhook署名検証: 無効なペイロード")
+        return False
+    except stripe.error.SignatureVerificationError:
+        logger.error("Webhook署名検証: 署名が一致しません")
+        return False
+
+def is_webhook_event_processed(event_id: str) -> bool:
+    """
+    Webhookイベントが既に処理済みかチェック（冪等性保証）
+    
+    Args:
+        event_id (str): Stripe Event ID
+        
+    Returns:
+        bool: 処理済みかどうか
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM webhook_events WHERE stripe_event_id = ?",
+            (event_id,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    except Exception as e:
+        logger.error(f"Webhook処理状況確認エラー: {str(e)}")
+        return False
+
+def mark_webhook_event_processed(event_id: str, event_type: str, result: str = "success") -> bool:
+    """
+    Webhookイベントを処理済みとしてマーク
+    
+    Args:
+        event_id (str): Stripe Event ID
+        event_type (str): イベントタイプ
+        result (str): 処理結果
+        
+    Returns:
+        bool: マーク成功
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO webhook_events (stripe_event_id, event_type, processing_result) VALUES (?, ?, ?)",
+            (event_id, event_type, result)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Webhookイベントマークエラー: {str(e)}")
+        return False
+
+def upsert_subscription(subscription_data: Dict[str, Any]) -> bool:
+    """
+    サブスクリプション情報をDB に挿入または更新
+    
+    Args:
+        subscription_data (Dict[str, Any]): サブスクリプション情報
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # トランザクション開始
+        cursor.execute("BEGIN")
+        
+        cursor.execute("""
+            INSERT OR REPLACE INTO subscriptions (
+                user_id, stripe_subscription_id, plan_id, status,
+                current_period_start, current_period_end, cancel_at_period_end,
+                trial_end, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            subscription_data['user_id'],
+            subscription_data['stripe_subscription_id'],
+            subscription_data['plan_id'],
+            subscription_data['status'],
+            subscription_data['current_period_start'],
+            subscription_data['current_period_end'],
+            subscription_data['cancel_at_period_end'],
+            subscription_data.get('trial_end')
+        ))
+        
+        conn.commit()
+        logger.info(f"サブスクリプション更新成功: {subscription_data['stripe_subscription_id']}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"サブスクリプション更新エラー: {str(e)}")
+        if 'conn' in locals():
+            conn.rollback()
+        return False
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def handle_checkout_session_completed(event_data: Dict[str, Any]) -> bool:
+    """
+    checkout.session.completed イベントを処理
+    
+    Args:
+        event_data (Dict[str, Any]): イベントデータ
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        session = event_data.get('object', {})
+        user_id = session.get('metadata', {}).get('user_id')
+        
+        if not user_id:
+            logger.error("checkout.session.completed: user_idが見つかりません")
+            return False
+        
+        subscription_id = session.get('subscription')
+        if not subscription_id:
+            logger.error("checkout.session.completed: subscription_idが見つかりません")
+            return False
+        
+        # サブスクリプション詳細を取得
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        subscription_data = {
+            'user_id': int(user_id),
+            'stripe_subscription_id': subscription.id,
+            'plan_id': 'Pro',
+            'status': subscription.status,
+            'current_period_start': datetime.fromtimestamp(subscription.current_period_start),
+            'current_period_end': datetime.fromtimestamp(subscription.current_period_end),
+            'cancel_at_period_end': subscription.cancel_at_period_end,
+            'trial_end': datetime.fromtimestamp(subscription.trial_end) if subscription.trial_end else None
+        }
+        
+        return upsert_subscription(subscription_data)
+        
+    except Exception as e:
+        logger.error(f"checkout.session.completed処理エラー: {str(e)}")
+        return False
+
+def handle_subscription_updated(event_data: Dict[str, Any]) -> bool:
+    """
+    customer.subscription.updated イベントを処理
+    
+    Args:
+        event_data (Dict[str, Any]): イベントデータ
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        subscription = event_data.get('object', {})
+        
+        # user_idをサブスクリプションから取得
+        user_id = subscription.get('metadata', {}).get('user_id')
+        if not user_id:
+            # Stripe Customer IDからuser_idを逆引き
+            customer_id = subscription.get('customer')
+            if customer_id:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM users WHERE stripe_customer_id = ?", (customer_id,))
+                result = cursor.fetchone()
+                conn.close()
+                if result:
+                    user_id = result['id']
+        
+        if not user_id:
+            logger.error("subscription.updated: user_idが特定できません")
+            return False
+        
+        subscription_data = {
+            'user_id': int(user_id),
+            'stripe_subscription_id': subscription['id'],
+            'plan_id': 'Pro',
+            'status': subscription['status'],
+            'current_period_start': datetime.fromtimestamp(subscription['current_period_start']),
+            'current_period_end': datetime.fromtimestamp(subscription['current_period_end']),
+            'cancel_at_period_end': subscription['cancel_at_period_end'],
+            'trial_end': datetime.fromtimestamp(subscription['trial_end']) if subscription.get('trial_end') else None
+        }
+        
+        return upsert_subscription(subscription_data)
+        
+    except Exception as e:
+        logger.error(f"subscription.updated処理エラー: {str(e)}")
+        return False
+
+def handle_subscription_deleted(event_data: Dict[str, Any]) -> bool:
+    """
+    customer.subscription.deleted イベントを処理
+    
+    Args:
+        event_data (Dict[str, Any]): イベントデータ
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        subscription = event_data.get('object', {})
+        subscription_id = subscription.get('id')
+        
+        if not subscription_id:
+            logger.error("subscription.deleted: subscription_idが見つかりません")
+            return False
+        
+        # サブスクリプションのステータスを'canceled'に更新
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE subscriptions SET status = 'canceled', updated_at = CURRENT_TIMESTAMP WHERE stripe_subscription_id = ?",
+            (subscription_id,)
+        )
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"サブスクリプション削除処理完了: {subscription_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"subscription.deleted処理エラー: {str(e)}")
+        return False
+
+def handle_invoice_paid(event_data: Dict[str, Any]) -> bool:
+    """
+    invoice.paid イベントを処理
+    
+    Args:
+        event_data (Dict[str, Any]): イベントデータ
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        invoice = event_data.get('object', {})
+        subscription_id = invoice.get('subscription')
+        
+        if not subscription_id:
+            logger.info("invoice.paid: サブスクリプション以外の請求書")
+            return True
+        
+        # サブスクリプション情報を更新
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        # user_idを特定
+        user_id = subscription.metadata.get('user_id')
+        if not user_id:
+            customer_id = subscription.customer
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE stripe_customer_id = ?", (customer_id,))
+            result = cursor.fetchone()
+            conn.close()
+            if result:
+                user_id = result['id']
+        
+        if not user_id:
+            logger.error("invoice.paid: user_idが特定できません")
+            return False
+        
+        subscription_data = {
+            'user_id': int(user_id),
+            'stripe_subscription_id': subscription.id,
+            'plan_id': 'Pro',
+            'status': subscription.status,
+            'current_period_start': datetime.fromtimestamp(subscription.current_period_start),
+            'current_period_end': datetime.fromtimestamp(subscription.current_period_end),
+            'cancel_at_period_end': subscription.cancel_at_period_end,
+            'trial_end': datetime.fromtimestamp(subscription.trial_end) if subscription.trial_end else None
+        }
+        
+        return upsert_subscription(subscription_data)
+        
+    except Exception as e:
+        logger.error(f"invoice.paid処理エラー: {str(e)}")
+        return False
+
+def handle_invoice_payment_failed(event_data: Dict[str, Any]) -> bool:
+    """
+    invoice.payment_failed イベントを処理
+    
+    Args:
+        event_data (Dict[str, Any]): イベントデータ
+        
+    Returns:
+        bool: 処理成功
+    """
+    try:
+        invoice = event_data.get('object', {})
+        subscription_id = invoice.get('subscription')
+        
+        if not subscription_id:
+            logger.info("invoice.payment_failed: サブスクリプション以外の請求書")
+            return True
+        
+        # サブスクリプション情報を更新（past_dueステータスに）
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        # user_idを特定
+        user_id = subscription.metadata.get('user_id')
+        if not user_id:
+            customer_id = subscription.customer
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE stripe_customer_id = ?", (customer_id,))
+            result = cursor.fetchone()
+            conn.close()
+            if result:
+                user_id = result['id']
+        
+        if not user_id:
+            logger.error("invoice.payment_failed: user_idが特定できません")
+            return False
+        
+        subscription_data = {
+            'user_id': int(user_id),
+            'stripe_subscription_id': subscription.id,
+            'plan_id': 'Pro',
+            'status': subscription.status,  # 'past_due'になる
+            'current_period_start': datetime.fromtimestamp(subscription.current_period_start),
+            'current_period_end': datetime.fromtimestamp(subscription.current_period_end),
+            'cancel_at_period_end': subscription.cancel_at_period_end,
+            'trial_end': datetime.fromtimestamp(subscription.trial_end) if subscription.trial_end else None
+        }
+        
+        success = upsert_subscription(subscription_data)
+        
+        # 督促通知などの追加処理をここに追加可能
+        logger.warning(f"決済失敗: user_id={user_id}, subscription_id={subscription_id}")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"invoice.payment_failed処理エラー: {str(e)}")
+        return False
+
+def process_stripe_webhook(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Stripe Webhookイベントを処理
+    
+    Args:
+        event (Dict[str, Any]): Stripe Event
+        
+    Returns:
+        Dict[str, Any]: 処理結果
+    """
+    event_id = event.get('id')
+    event_type = event.get('type')
+    
+    if not event_id or not event_type:
+        return {
+            'success': False,
+            'message': '無効なイベント形式'
+        }
+    
+    # 冪等性チェック
+    if is_webhook_event_processed(event_id):
+        logger.info(f"Webhook既に処理済み: {event_id}")
+        return {
+            'success': True,
+            'message': '既に処理済み'
+        }
+    
+    try:
+        success = False
+        
+        # イベントタイプに応じて処理
+        if event_type == 'checkout.session.completed':
+            success = handle_checkout_session_completed(event.get('data', {}))
+        elif event_type == 'customer.subscription.updated':
+            success = handle_subscription_updated(event.get('data', {}))
+        elif event_type == 'customer.subscription.deleted':
+            success = handle_subscription_deleted(event.get('data', {}))
+        elif event_type == 'invoice.paid':
+            success = handle_invoice_paid(event.get('data', {}))
+        elif event_type == 'invoice.payment_failed':
+            success = handle_invoice_payment_failed(event.get('data', {}))
+        else:
+            logger.info(f"未対応のWebhookイベント: {event_type}")
+            success = True  # 未対応イベントは成功扱い
+        
+        # 処理結果をマーク
+        mark_webhook_event_processed(
+            event_id, event_type, "success" if success else "failed"
+        )
+        
+        return {
+            'success': success,
+            'message': f'{event_type} 処理完了' if success else f'{event_type} 処理失敗'
+        }
+        
+    except Exception as e:
+        logger.error(f"Webhook処理エラー: {str(e)}")
+        mark_webhook_event_processed(event_id, event_type, f"error: {str(e)}")
+        return {
+            'success': False,
+            'message': f'処理エラー: {str(e)}'
+        }
