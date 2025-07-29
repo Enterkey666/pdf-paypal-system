@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>履歴詳細: {{ filename }} - PDF一括処理 & PayPal決済リンク発行</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        /* モバイル最適化 */
+        @media (max-width: 768px) {
+            .table-responsive {
+                font-size: 0.8rem;
+            }
+            
+            .table th, .table td {
+                padding: 0.5rem 0.25rem;
+                vertical-align: middle;
+            }
+            
+            .badge {
+                font-size: 0.7rem;
+                padding: 0.25rem 0.5rem;
+            }
+            
+            .btn-sm {
+                font-size: 0.7rem;
+                padding: 0.25rem 0.5rem;
+            }
+            
+            .fw-bold.fs-5 {
+                font-size: 1rem !important;
+            }
+            
+            /* プロバイダー列のアイコンを小さく */
+            .provider-badge {
+                font-size: 0.6rem;
+                padding: 0.2rem 0.4rem;
+            }
+            
+            .provider-badge i {
+                font-size: 0.8rem;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .container {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+            
+            .card-body {
+                padding: 1rem;
+            }
+            
+            .table th:first-child,
+            .table td:first-child {
+                min-width: 80px;
+            }
+            
+            .btn-sm .btn-text {
+                display: none;
+            }
+            
+            .d-flex.gap-2 {
+                flex-direction: column;
+                gap: 0.5rem !important;
+            }
+            
+            .display-5 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク発行システム
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="bi bi-house"></i> ホーム</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <header class="pb-3 mb-4 border-bottom">
+            <div class="d-flex align-items-center">
+                <h1 class="display-5 fw-bold">履歴詳細</h1>
+            </div>
+        </header>
+
+        <div class="row">
+            <div class="col-md-10 mx-auto">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">ファイル: {{ filename }}</h5>
+                        <a href="/history" class="btn btn-secondary mb-3"><i class="bi bi-arrow-left"></i> 履歴一覧へ戻る</a>
+                        
+                        {% if results %}
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-hover">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>ファイル名</th>
+                                            <th>顧客名</th>
+                                            <th>金額</th>
+                                            <th>決済プロバイダー</th>
+                                            <th>決済リンク</th>
+                                            <th>決済状態</th>
+                                            <th>処理日時</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in results %}
+                                        <tr>
+                                            <td>{{ item.filename or item.ファイル名 }}</td>
+                                            <td class="fw-bold fs-5 text-primary">{{ item.formatted_customer or item.customer or item.customer_name or item.顧客名 }}</td>
+                                            <td>{{ item.formatted_amount or item.amount or item.金額 }}</td>
+                                            <td>
+                                                {% set payment_link = item.payment_link or item.決済リンク %}
+                                                {% if payment_link %}
+                                                    {% if 'paypal.com' in payment_link %}
+                                                        <span class="badge bg-primary provider-badge">
+                                                            <i class="fab fa-paypal me-1"></i>PayPal
+                                                        </span>
+                                                    {% elif 'stripe.com' in payment_link or 'stripe' in (item.payment_provider or '') %}
+                                                        <span class="badge bg-info provider-badge">
+                                                            <i class="fab fa-stripe me-1"></i>Stripe
+                                                        </span>
+                                                    {% else %}
+                                                        <span class="badge bg-secondary provider-badge">
+                                                            <i class="bi bi-credit-card me-1"></i>{{ item.payment_provider or '不明' }}
+                                                        </span>
+                                                    {% endif %}
+                                                {% else %}
+                                                    <span class="text-muted">-</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if item.payment_link or item.決済リンク %}
+                                                    <a href="{{ item.payment_link or item.決済リンク }}" target="_blank" class="btn btn-sm btn-primary" onclick="window.open('{{ item.payment_link or item.決済リンク }}', '_blank'); return true;">
+                                                        <i class="bi bi-link-45deg"></i> 決済リンク
+                                                    </a>
+                                                    <button class="btn btn-sm btn-outline-secondary ms-1 copy-link-btn" data-link="{{ item.payment_link or item.決済リンク }}" title="リンクをコピー">
+                                                        <i class="bi bi-clipboard"></i>
+                                                    </button>
+                                                {% else %}
+                                                    <span class="text-muted">リンクなし</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if item.payment_status == "COMPLETED" %}
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> 決済済み</span>
+                                                        {% set payment_link = item.payment_link or item.決済リンク %}
+                                                        {% set customer = item.formatted_customer or item.customer or item.顧客名 or '' %}
+                                                        {% set amount_value = item.formatted_amount or item.amount or item.金額 or '' %}
+                                                        {% if payment_link %}
+                                                            <a href="{{ url_for('export_pdf', result='success') }}?order_id={{ payment_link.split('token=')[1] if 'token=' in payment_link else '' }}&customer_name={{ customer }}&amount={{ amount_value }}" class="btn btn-sm btn-outline-success pdf-export-btn" title="PDFで保存">
+                                                                <i class="bi bi-file-earmark-pdf"></i> <span class="btn-text">PDF</span>
+                                                            </a>
+                                                        {% else %}
+                                                            <a href="{{ url_for('export_pdf', result='success') }}?customer_name={{ customer }}&amount={{ amount_value }}" class="btn btn-sm btn-outline-success pdf-export-btn" title="PDFで保存">
+                                                                <i class="bi bi-file-earmark-pdf"></i> <span class="btn-text">PDF</span>
+                                                            </a>
+                                                        {% endif %}
+                                                    </div>
+                                                {% elif item.payment_status == "PENDING" %}
+                                                    <span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> 処理中</span>
+                                                {% elif item.payment_status == "FAILED" %}
+                                                    <span class="badge bg-danger"><i class="bi bi-x-circle"></i> 失敗</span>
+                                                {% else %}
+                                                    <span class="badge bg-secondary"><i class="bi bi-question-circle"></i> 未決済</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>{{ item.timestamp or item.処理日時 }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <div class="alert alert-warning">履歴データが見つかりません。</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- コピー成功時の通知モーダル -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 5">
+        <div id="copyToast" class="toast align-items-center text-white bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="bi bi-check-circle-fill me-2"></i> 決済リンクをクリップボードにコピーしました
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // リンクコピー機能
+        document.addEventListener('DOMContentLoaded', function() {
+            // コピーボタンのイベントリスナーを設定
+            const copyButtons = document.querySelectorAll('.copy-link-btn');
+            copyButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const link = this.getAttribute('data-link');
+                    
+                    // クリップボードAPIが使用可能かチェック
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(link).then(() => {
+                            // コピー成功時の通知を表示
+                            const toast = new bootstrap.Toast(document.getElementById('copyToast'));
+                            toast.show();
+                        }).catch(err => {
+                            console.error('クリップボードへのコピーに失敗しました:', err);
+                            // フォールバックメソッド
+                            fallbackCopyTextToClipboard(link);
+                        });
+                    } else {
+                        // フォールバックメソッド
+                        fallbackCopyTextToClipboard(link);
+                    }
+                });
+            });
+            
+            // フォールバックのクリップボードコピー機能
+            function fallbackCopyTextToClipboard(text) {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                
+                // スクロールしないようにする
+                textArea.style.top = '0';
+                textArea.style.left = '0';
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                        const toast = new bootstrap.Toast(document.getElementById('copyToast'));
+                        toast.show();
+                    } else {
+                        console.error('クリップボードへのコピーに失敗しました');
+                    }
+                } catch (err) {
+                    console.error('クリップボードへのコピーに失敗しました:', err);
+                }
+                
+                document.body.removeChild(textArea);
+            }
+
+            // 決済リンクのクリックイベントを強化
+            const paymentLinks = document.querySelectorAll('a[href^="https://www.paypal.com"]');
+            paymentLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    // デフォルトの動作を防止
+                    e.preventDefault();
+                    // 新しいウィンドウでリンクを開く
+                    const url = this.getAttribute('href');
+                    window.open(url, '_blank');
+                });
+            });
+            
+            // PDFエクスポートボタンのクリックイベント
+            const pdfExportButtons = document.querySelectorAll('.pdf-export-btn');
+            pdfExportButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    // ボタンのテキストを変更
+                    const btnText = this.querySelector('.btn-text');
+                    if (btnText) {
+                        const originalText = btnText.textContent;
+                        btnText.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                    } else {
+                        this.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 処理中...';
+                    }
+                    
+                    // ボタンを無効化
+                    this.classList.add('disabled');
+                    
+                    // 通知を表示
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-info mt-3 pdf-export-alert';
+                    alertDiv.innerHTML = '<i class="bi bi-info-circle"></i> PDFエクスポートを処理中です。しばらくお待ちください...';
+                    
+                    // 通知を表示する場所を特定
+                    const container = document.querySelector('.container');
+                    if (container) {
+                        // 既存の通知があれば削除
+                        const existingAlert = container.querySelector('.pdf-export-alert');
+                        if (existingAlert) {
+                            existingAlert.remove();
+                        }
+                        container.insertBefore(alertDiv, container.firstChild.nextSibling);
+                    }
+                    
+                    // 通常の動作を続行（リンクを開く）
+                    // 注意: このイベントはキャンセルしない
+                });
+            });
+        });
+    </script>
+</body>
+</html>

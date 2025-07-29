@@ -9,7 +9,19 @@
       "Bash(chmod:*)",
       "Bash(mkdir:*)",
       "Bash(curl:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git rm:*)",
+      "Bash(gcloud config get-value:*)",
+      "Bash(./deploy_webapp_gcp.sh:*)",
+      "Bash(sqlite3:*)",
+      "Bash(gcloud app deploy:*)",
+      "WebFetch(domain:cloud.google.com)",
+      "Bash(cp:*)",
+      "Bash(true)",
+      "WebFetch(domain:pdf-system-20250621.uc.r.appspot.com)",
+      "Bash(gcloud app logs read:*)",
+      "Bash(gcloud app services set-traffic:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }

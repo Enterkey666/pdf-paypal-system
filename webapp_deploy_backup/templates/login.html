@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理者ログイン - PDF処理 & PayPal決済リンク発行システム</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h4 class="mb-0">ログイン</h4>
+                    </div>
+                    <div class="card-body">
+                        {% with messages = get_flashed_messages(with_categories=true) %}
+                            {% if messages %}
+                                {% for category, message in messages %}
+                                    <div class="alert alert-{{ category if category != 'error' else 'danger' }}">
+                                        {{ message }}
+                                    </div>
+                                {% endfor %}
+                            {% endif %}
+                        {% endwith %}
+                        
+                        <form method="POST" action="{{ url_for('auth.login') }}">
+                            {{ form.csrf_token }}
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <!-- CSRFトークンが正しく設定されていることを確認 -->
+                            {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+                            
+                            <div class="form-group mb-3">
+                                {{ form.username.label(class="form-label") }}
+                                {{ form.username(class="form-control", id="username", required=True) }}
+                                {% if form.username.errors %}
+                                    <div class="text-danger">
+                                        {% for error in form.username.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="form-group mb-3">
+                                {{ form.password.label(class="form-label") }}
+                                {{ form.password(class="form-control", id="password", required=True) }}
+                                {% if form.password.errors %}
+                                    <div class="text-danger">
+                                        {% for error in form.password.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="form-check mb-3">
+                                {{ form.remember(class="form-check-input", id="remember") }}
+                                {{ form.remember.label(class="form-check-label") }}
+                            </div>
+                            
+                            <div class="d-grid mb-3">
+                                <button type="submit" class="btn btn-primary" id="loginButton">ログイン</button>
+                            </div>
+                            
+                            <div class="text-center mb-3">
+                                <a href="{{ url_for('auth.register') }}">アカウントをお持ちではありませんか？新規登録</a>
+                            </div>
+                            
+                            <div class="d-grid">
+                                <a href="{{ url_for('index') }}" class="btn btn-secondary">トップページに戻る</a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const loginForm = document.querySelector('form');
+            const loginButton = document.getElementById('loginButton');
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
+            
+            // フォームの入力フィールドの変更を監視
+            function checkFormValidity() {
+                if (usernameInput.value.trim() !== '' && passwordInput.value.trim() !== '') {
+                    loginButton.disabled = false;
+                } else {
+                    loginButton.disabled = true;
+                }
+            }
+            
+            // 初期状態でボタンを有効にする
+            loginButton.disabled = false;
+            
+            // 入力フィールドの変更を監視
+            usernameInput.addEventListener('input', checkFormValidity);
+            passwordInput.addEventListener('input', checkFormValidity);
+            
+            // フォーム送信時の処理
+            loginForm.addEventListener('submit', function(e) {
+                // ボタンを無効化してスピナーを表示
+                loginButton.disabled = true;
+                const originalText = loginButton.innerHTML;
+                loginButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ログイン中...';
+                
+                // フォームが自動的に送信されるので、ここでは特に何もしない
+                // ただし、送信が失敗した場合のためにタイムアウトを設定
+                setTimeout(function() {
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = originalText;
+                }, 10000); // 10秒後にボタンを元に戻す（サーバーからの応答がない場合）
+            });
+        });
+    </script>
+</body>
+</html>

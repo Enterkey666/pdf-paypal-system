@@ -1,0 +1,62 @@
+# Google App Engine configuration for PDF PayPal Stripe System (Full Version)
+runtime: python39
+
+# Enhanced scaling configuration for full-featured application
+automatic_scaling:
+  min_instances: 1
+  max_instances: 20
+  target_cpu_utilization: 0.6
+  target_throughput_utilization: 0.6
+
+# Environment variables for full system
+env_variables:
+  SECRET_KEY: "pdf-paypal-stripe-system-secret-key-2025"
+  FLASK_ENV: "production"
+  FLASK_DEBUG: "false"
+  USE_TEMP_DIR: "true"
+  GOOGLE_CLOUD: "true"
+  UPLOAD_FOLDER: "/tmp/uploads"
+  RESULTS_FOLDER: "/tmp/results"
+  SESSION_TYPE: "filesystem"
+  SESSION_USE_SIGNER: "true"
+  SESSION_PERMANENT: "true"
+  PERMANENT_SESSION_LIFETIME: "604800"
+  WTF_CSRF_ENABLED: "true"
+
+# Enhanced resource limits for full system
+resources:
+  cpu: 2
+  memory_gb: 4
+  disk_size_gb: 10
+
+# Network settings
+network:
+  session_affinity: true
+
+# Instance configuration - enhanced for better performance
+instance_class: F4
+
+# Static file handling
+handlers:
+  - url: /static
+    static_dir: static
+    secure: always
+  - url: /.*
+    script: auto
+    secure: always
+
+# Health check configuration
+liveness_check:
+  path: "/health"
+  check_interval_sec: 30
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+
+readiness_check:
+  path: "/health"
+  check_interval_sec: 5
+  timeout_sec: 4
+  failure_threshold: 2
+  success_threshold: 2
+  app_start_timeout_sec: 300

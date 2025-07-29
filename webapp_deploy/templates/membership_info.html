@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}有料会員情報{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg animate__animated animate__fadeIn">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="bi bi-star-fill me-2"></i>有料会員プラン</h4>
+                </div>
+                <div class="card-body p-4">
+                    <div class="text-center mb-4">
+                        <div class="display-1 text-primary mb-3">
+                            <i class="bi bi-award"></i>
+                        </div>
+                        <h2 class="mb-3">本番モードと外部API機能へのアクセス</h2>
+                        <p class="lead text-muted">有料会員になると、本番モードでの設定ページへのアクセスや外部APIの使用が可能になります。</p>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-info-circle-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>現在のモード: {{ paypal_mode }}</h5>
+                                <p class="mb-0">
+                                    {% if paypal_mode == 'sandbox' %}
+                                    Sandboxモードでは、すべての機能を制限なく使用できます。
+                                    {% else %}
+                                    本番モードでは、有料会員のみが特定の機能を使用できます。
+                                    {% endif %}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <div class="card h-100 border-0 shadow-sm">
+                                <div class="card-body">
+                                    <h5 class="card-title"><i class="bi bi-box-seam me-2 text-success"></i>無料プラン</h5>
+                                    <ul class="list-unstyled mt-3">
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>Sandboxモードでの全機能</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>基本的なPDF処理</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>PayPal Sandbox決済リンク</li>
+                                        <li class="mb-2"><i class="bi bi-x-circle-fill text-danger me-2"></i>本番モードでの設定アクセス</li>
+                                        <li class="mb-2"><i class="bi bi-x-circle-fill text-danger me-2"></i>外部API（Google、Azul）</li>
+                                    </ul>
+                                </div>
+                                <div class="card-footer bg-transparent border-0 text-center">
+                                    <span class="badge bg-success p-2 px-3">現在のプラン</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100 border-primary shadow">
+                                <div class="card-body">
+                                    <h5 class="card-title"><i class="bi bi-gem me-2 text-primary"></i>有料会員プラン</h5>
+                                    <ul class="list-unstyled mt-3">
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>Sandboxモードでの全機能</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>本番モードでの全機能</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>外部API（Google、Azul）</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>PayPal本番決済リンク</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i>優先サポート</li>
+                                    </ul>
+                                </div>
+                                <div class="card-footer bg-transparent border-0 text-center">
+                                    <a href="{{ url_for('contact_admin') }}" class="btn btn-primary btn-lg px-4">
+                                        <i class="bi bi-envelope me-2"></i>管理者に連絡する
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning mt-4">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-exclamation-triangle-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>有料会員登録について</h5>
+                                <p class="mb-0">現在、有料会員登録は管理者による手動設定で行っています。詳細は管理者にお問い合わせください。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-light text-center py-3">
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-2"></i>ホームに戻る
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

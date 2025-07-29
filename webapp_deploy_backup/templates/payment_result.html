@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>
+        {% if result == "success" %}
+        決済完了
+        {% else %}
+        決済キャンセル
+        {% endif %}
+    </title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap">
+    {% if result == "success" and status != "COMPLETED" %}
+    <script>
+        // 支払い処理中の場合、10秒ごとに自動更新
+        document.addEventListener('DOMContentLoaded', function() {
+            // カウントダウンタイマーの初期値（10秒）
+            let countdown = 10;
+            // カウントダウン表示要素
+            const countdownElement = document.getElementById('refresh-countdown');
+            
+            // 1秒ごとにカウントダウンを更新
+            const timer = setInterval(function() {
+                countdown--;
+                if (countdownElement) {
+                    countdownElement.textContent = countdown;
+                }
+                
+                // カウントダウンが0になったらページを更新
+                if (countdown <= 0) {
+                    clearInterval(timer);
+                    window.location.reload();
+                }
+            }, 1000);
+            
+            // 手動更新ボタンのイベントリスナー
+            const refreshButton = document.getElementById('manual-refresh');
+            if (refreshButton) {
+                refreshButton.addEventListener('click', function() {
+                    window.location.reload();
+                });
+            }
+        });
+    </script>
+    {% endif %}
+    <style>
+        :root {
+            --primary-color: #4361ee;
+            --secondary-color: #3f37c9;
+            --accent-color: #4cc9f0;
+            --success-color: #4ade80;
+            --warning-color: #fbbf24;
+            --danger-color: #f87171;
+            --light-color: #f8fafc;
+            --dark-color: #1e293b;
+            --border-radius: 12px;
+            --box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #f0f5ff;
+            color: var(--dark-color);
+            transition: all 0.3s ease;
+        }
+        
+        .card {
+            border: none;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border: none;
+            box-shadow: 0 4px 6px rgba(67, 97, 238, 0.3);
+            border-radius: 50px;
+            padding: 0.6rem 1.5rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 7px 14px rgba(67, 97, 238, 0.4);
+            background: linear-gradient(135deg, var(--secondary-color), var(--primary-color));
+        }
+    </style>
+</head>
+<body>
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-lg animate__animated animate__fadeIn">
+                <div class="card-header {% if result == 'success' %}{% if status == 'COMPLETED' %}bg-success{% else %}bg-info{% endif %}{% else %}bg-warning{% endif %} text-white">
+                    <h4 class="mb-0">
+                        {% if result == "success" %}
+                            {% if status == "COMPLETED" %}
+                            <i class="bi bi-check-circle-fill me-2"></i>決済完了
+                            {% else %}
+                            <i class="bi bi-hourglass-split me-2"></i>決済処理中
+                            {% endif %}
+                        {% else %}
+                        <i class="bi bi-x-circle-fill me-2"></i>決済キャンセル
+                        {% endif %}
+                    </h4>
+                </div>
+                <div class="card-body p-4">
+                    <div class="text-center mb-4">
+                        <div class="display-1 {% if result == 'success' %}{% if status == 'COMPLETED' %}text-success{% else %}text-info{% endif %}{% else %}text-warning{% endif %} mb-3">
+                            {% if result == "success" %}
+                                {% if status == "COMPLETED" %}
+                                <i class="bi bi-emoji-smile"></i>
+                                {% else %}
+                                <i class="bi bi-hourglass-split"></i>
+                                {% endif %}
+                            {% else %}
+                            <i class="bi bi-emoji-neutral"></i>
+                            {% endif %}
+                        </div>
+                        
+                        {% if result == "success" %}
+                            {% if status == "COMPLETED" %}
+                            <h2 class="mb-3">お支払いが完了しました</h2>
+                            <p class="lead text-muted">ありがとうございます。お支払いが正常に処理されました。</p>
+                            {% else %}
+                            <h2 class="mb-3 text-info">お支払い処理中</h2>
+                            <p class="lead text-muted">お支払い情報を処理しています。しばらくお待ちください。</p>
+                            <div class="alert alert-info mt-3">
+                                <div class="d-flex align-items-center">
+                                    <div class="spinner-border spinner-border-sm text-info me-2" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <span><span id="refresh-countdown">10</span>秒後に自動更新します</span>
+                                </div>
+                                <button id="manual-refresh" class="btn btn-sm btn-outline-info mt-2">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>今すぐ更新
+                                </button>
+                            </div>
+                            {% endif %}
+                        {% else %}
+                            <h2 class="mb-3">お支払いがキャンセルされました</h2>
+                            <p class="lead text-muted">お支払いプロセスはキャンセルされました。</p>
+                        {% endif %}
+                    </div>
+
+                    <div class="alert {% if result == 'success' %}alert-success{% else %}alert-warning{% endif %}">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                {% if result == "success" %}
+                                <i class="bi bi-info-circle-fill fs-3"></i>
+                                {% else %}
+                                <i class="bi bi-exclamation-triangle-fill fs-3"></i>
+                                {% endif %}
+                            </div>
+                            <div>
+                                <h5>取引情報</h5>
+                                <p class="mb-1"><strong>注文ID:</strong> {{ order_id }}</p>
+                                <p class="mb-1"><strong>状態:</strong> {{ status }}</p>
+                                {% if provider %}
+                                <p class="mb-1"><strong>決済方式:</strong> {{ provider|title }}</p>
+                                {% endif %}
+                                {% if message %}
+                                <p class="mb-1"><strong>メッセージ:</strong> {{ message }}</p>
+                                {% endif %}
+                                <p class="mb-0"><strong>日時:</strong> {{ current_time }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if result == "success" and status == "COMPLETED" %}
+                    <div class="alert alert-info mt-4">
+                        <div class="d-flex">
+                            <div class="me-3">
+                                <i class="bi bi-envelope-fill fs-3"></i>
+                            </div>
+                            <div>
+                                <h5>領収書について</h5>
+                                <p class="mb-0">領収書はメールで送信されます。メールが届かない場合は管理者にお問い合わせください。</p>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

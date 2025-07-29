@@ -1,0 +1,1971 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>設定 - PDF処理 & PayPal決済リンク発行システム</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .settings-card {
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #f1f8ff;
+            border-bottom: 1px solid #dee2e6;
+            border-radius: 15px 15px 0 0 !important;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        .btn-save {
+            background-color: #0070ba;
+            border-color: #0070ba;
+        }
+        .btn-save:hover {
+            background-color: #005ea6;
+            border-color: #005ea6;
+        }
+        .status-badge {
+            font-size: 0.8rem;
+            padding: 0.4rem 0.7rem;
+        }
+        .mode-badge {
+            font-size: 0.7rem;
+            padding: 0.3rem 0.6rem;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .tooltip-icon {
+            cursor: help;
+            color: #6c757d;
+        }
+        .api-status {
+            font-size: 0.9rem;
+        }
+        
+        /* レスポンシブデザインの追加最適化 */
+        @media (max-width: 768px) {
+            .settings-card {
+                margin-bottom: 15px;
+            }
+            
+            .card-header h5 {
+                font-size: 1.1rem;
+            }
+            
+            .form-group {
+                margin-bottom: 1rem;
+            }
+            
+            .btn {
+                font-size: 0.9rem;
+                padding: 0.5rem 1rem;
+            }
+            
+            .status-badge {
+                font-size: 0.7rem;
+                padding: 0.3rem 0.5rem;
+            }
+            
+            .d-flex.justify-content-between {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            .d-flex.justify-content-between > div {
+                text-align: center;
+            }
+            
+            .alert {
+                font-size: 0.9rem;
+                padding: 0.75rem;
+            }
+            
+            .input-group-text {
+                padding: 0.5rem;
+            }
+            
+            .form-check-label {
+                font-size: 0.9rem;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .container {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+            
+            .card-body {
+                padding: 1rem;
+            }
+            
+            .btn-group-vertical .btn {
+                margin-bottom: 0.5rem;
+            }
+            
+            .table-responsive {
+                font-size: 0.8rem;
+            }
+            
+            .notification-toast {
+                right: 10px !important;
+                left: 10px !important;
+                min-width: auto !important;
+                max-width: calc(100vw - 20px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-file-earmark-pdf text-danger"></i> PDF処理 & PayPal決済リンク
+                {% if paypal_mode == 'live' %}
+                <span class="badge bg-success mode-badge">本番環境</span>
+                {% else %}
+                <span class="badge bg-warning mode-badge">サンドボックス</span>
+                {% endif %}
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="bi bi-house"></i> ホーム</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/settings"><i class="bi bi-gear"></i> 設定</a>
+                    </li>
+                    {% if session.get('admin_logged_in') %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="/history"><i class="bi bi-clock-history"></i> 履歴</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-danger" href="/logout"><i class="bi bi-box-arrow-right"></i> ログアウト</a>
+                    </li>
+                    <li class="nav-item">
+                        <span class="badge bg-primary rounded-pill ms-2 mt-2"><i class="bi bi-shield-check"></i> 管理者</span>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link text-success" href="/login"><i class="bi bi-box-arrow-in-right"></i> 管理者ログイン</a>
+                    </li>
+                    <li class="nav-item">
+                        <span class="badge bg-secondary rounded-pill ms-2 mt-2"><i class="bi bi-person"></i> ゲスト</span>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-5">
+        <h2 class="mb-4"><i class="bi bi-gear"></i> システム設定</h2>
+        
+        {% if message %}
+        <div class="alert alert-{{ message_type }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endif %}
+        
+        <!-- ユーザー状態と権限の説明 -->
+        <div class="alert alert-info mb-4">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <i class="bi bi-info-circle-fill fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="mb-1">現在の状態: 
+                        {% if session.get('admin_logged_in') %}
+                        <span class="badge bg-primary"><i class="bi bi-shield-check"></i> 管理者</span>
+                        {% else %}
+                        <span class="badge bg-secondary"><i class="bi bi-person"></i> ゲスト</span>
+                        {% endif %}
+                        
+                        {% if paypal_mode == 'live' %}
+                        <span class="badge bg-success"><i class="bi bi-lightning-charge"></i> 本番環境</span>
+                        {% else %}
+                        <span class="badge bg-warning"><i class="bi bi-tools"></i> サンドボックス環境</span>
+                        {% endif %}
+                    </h5>
+                    <p class="mb-0">
+                        {% if session.get('admin_logged_in') %}
+                        管理者としてログインしています。すべての設定を変更できます。
+                        {% else %}
+                        ゲストユーザーとして閲覧しています。サンドボックス環境の設定のみ変更できます。
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-paypal text-primary"></i> PayPal API 設定 (システム全体)
+                            {% if paypal_status %}
+                            <span class="badge bg-success status-badge float-end">接続済み</span>
+                            {% else %}
+                            <span class="badge bg-warning status-badge float-end">未接続</span>
+                            {% endif %}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form action="/settings/save" method="post" id="settings-form">
+                            <div class="form-group">
+                                <label for="paypal_mode">
+                                    環境モード
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="サンドボックス: テスト環境、本番: 実際の決済が発生します"></i>
+                                </label>
+                                <select class="form-select" id="paypal_mode" name="paypal_mode" 
+                                        {% if not is_admin %}disabled{% endif %}>
+                                    <option value="sandbox" {% if config.paypal_mode == 'sandbox' or not config.paypal_mode %}selected{% endif %}>サンドボックス</option>
+                                    <option value="live" {% if config.paypal_mode == 'live' %}selected{% endif %}>本番</option>
+                                </select>
+                                {% if not is_admin %}
+                                <small class="text-muted">環境モードの変更は管理者のみ可能です</small>
+                                {% endif %}
+                                <div class="mt-2">
+                                    <span class="badge {% if config.paypal_mode == 'live' %}bg-success{% else %}bg-warning{% endif %} p-2">
+                                        <i class="bi {% if config.paypal_mode == 'live' %}bi-lightning-charge{% else %}bi-tools{% endif %}"></i>
+                                        現在: {% if config.paypal_mode == 'live' %}本番環境{% else %}サンドボックス環境{% endif %}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="paypal_client_id">
+                                    PayPal Client ID
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="PayPal開発者ページで取得したClient ID"></i>
+                                </label>
+                                <input type="text" class="form-control" id="paypal_client_id" name="client_id" 
+                                       value="{{ config.client_id }}" 
+                                       {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}
+                                       placeholder="PayPal Developer Portalで取得したClient IDを入力">
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <small class="text-muted">本番環境のClient IDの変更は管理者のみ可能です</small>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="paypal_client_secret">
+                                    PayPal Client Secret
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="PayPal開発者ページで取得したClient Secret"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="paypal_client_secret" name="client_secret" 
+                                           value="{{ config.client_secret }}" 
+                                           {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}
+                                           placeholder="PayPal Developer Portalで取得したClient Secretを入力">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_secret">
+                                                <label class="form-check-label" for="show_secret">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <small class="text-muted">本番環境のClient Secretの変更は管理者のみ可能です</small>
+                                {% endif %}
+                            </div>
+
+                            <div class="form-group mt-3 mb-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="test_paypal_connection_button">
+                                    <i class="bi bi-shield-check"></i> PayPal接続テスト
+                                </button>
+                                <div id="paypal_connection_status" class="mt-2" style="min-height: 20px;"></div>
+                            </div>
+                            
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ユーザー別決済プロバイダー設定セクション -->
+        {% if session.get('user_id') %}
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-person-gear text-primary"></i> マイ決済プロバイダー設定
+                            <span class="badge bg-info status-badge float-end">ユーザー専用</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info mb-4">
+                            <div class="d-flex align-items-center">
+                                <div class="me-3">
+                                    <i class="bi bi-lightbulb-fill fs-3"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-1">マルチテナント機能</h6>
+                                    <p class="mb-0">あなた専用のPayPal/Stripe認証情報を設定できます。設定すると、システムの全体設定よりも優先されます。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ユーザー別PayPal設定 -->
+                        <form action="/settings/save_user_payment_provider" method="post" id="user-paypal-settings-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="provider_name" value="paypal">
+                            
+                            <h6 class="fw-bold mb-3">
+                                <i class="bi bi-paypal text-primary"></i> あなた専用のPayPal設定
+                            </h6>
+                            
+                            <div class="form-group">
+                                <label for="user_paypal_client_id">
+                                    PayPal Client ID
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのPayPal開発者アカウントで取得したClient ID"></i>
+                                </label>
+                                <input type="text" class="form-control" id="user_paypal_client_id" name="paypal_client_id" 
+                                       value="{{ user_paypal_credentials.client_id if user_paypal_credentials else '' }}" 
+                                       placeholder="あなたのPayPal Client IDを入力">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="user_paypal_client_secret">
+                                    PayPal Client Secret
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのPayPal開発者アカウントで取得したClient Secret"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="user_paypal_client_secret" name="paypal_client_secret" 
+                                           value="{{ user_paypal_credentials.client_secret if user_paypal_credentials else '' }}" 
+                                           placeholder="あなたのPayPal Client Secretを入力">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_user_paypal_secret">
+                                                <label class="form-check-label" for="show_user_paypal_secret">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="user_paypal_mode">
+                                    PayPal環境モード
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="sandbox: テスト環境、live: 本番環境"></i>
+                                </label>
+                                <select class="form-select" id="user_paypal_mode" name="paypal_mode">
+                                    <option value="sandbox" {% if user_paypal_credentials and user_paypal_credentials.mode == 'sandbox' %}selected{% endif %}>サンドボックス</option>
+                                    <option value="live" {% if user_paypal_credentials and user_paypal_credentials.mode == 'live' %}selected{% endif %}>本番</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group mt-3 mb-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm me-2" id="test_user_paypal_connection_button">
+                                    <i class="bi bi-shield-check"></i> PayPal接続テスト
+                                </button>
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-check-circle"></i> PayPal設定を保存
+                                </button>
+                            </div>
+                            <div id="user_paypal_connection_status" class="mt-2" style="min-height: 20px;"></div>
+                        </form>
+
+                        <hr>
+
+                        <!-- ユーザー別Stripe設定 -->
+                        <form action="/settings/save_user_payment_provider" method="post" id="user-stripe-settings-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="provider_name" value="stripe">
+                            
+                            <h6 class="fw-bold mb-3">
+                                <i class="fab fa-stripe text-info"></i> あなた専用のStripe設定
+                            </h6>
+                            
+                            <div class="form-group">
+                                <label for="user_stripe_mode">
+                                    Stripe環境モード
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="test: テスト環境、live: 本番環境"></i>
+                                </label>
+                                <select class="form-select" id="user_stripe_mode" name="stripe_mode">
+                                    <option value="test" {% if user_stripe_credentials and user_stripe_credentials.mode == 'test' %}selected{% endif %}>テスト</option>
+                                    <option value="live" {% if user_stripe_credentials and user_stripe_credentials.mode == 'live' %}selected{% endif %}>本番</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="user_stripe_publishable_key_test">
+                                    Stripe Publishable Key (テスト)
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのStripe Dashboardで取得したテスト用Publishable Key (pk_test_で始まる)"></i>
+                                </label>
+                                <input type="text" class="form-control" id="user_stripe_publishable_key_test" name="stripe_publishable_key_test" 
+                                       value="{{ user_stripe_credentials.publishable_key_test if user_stripe_credentials else '' }}" 
+                                       placeholder="pk_test_...">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="user_stripe_secret_key_test">
+                                    Stripe Secret Key (テスト)
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのStripe Dashboardで取得したテスト用Secret Key (sk_test_で始まる)"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="user_stripe_secret_key_test" name="stripe_secret_key_test" 
+                                           value="{{ user_stripe_credentials.secret_key_test if user_stripe_credentials else '' }}" 
+                                           placeholder="sk_test_...">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_user_stripe_secret_test">
+                                                <label class="form-check-label" for="show_user_stripe_secret_test">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="user_stripe_publishable_key_live">
+                                    Stripe Publishable Key (本番)
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのStripe Dashboardで取得した本番用Publishable Key (pk_live_で始まる)"></i>
+                                </label>
+                                <input type="text" class="form-control" id="user_stripe_publishable_key_live" name="stripe_publishable_key_live" 
+                                       value="{{ user_stripe_credentials.publishable_key_live if user_stripe_credentials else '' }}" 
+                                       placeholder="pk_live_...">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="user_stripe_secret_key_live">
+                                    Stripe Secret Key (本番)
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="あなたのStripe Dashboardで取得した本番用Secret Key (sk_live_で始まる)"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="user_stripe_secret_key_live" name="stripe_secret_key_live" 
+                                           value="{{ user_stripe_credentials.secret_key_live if user_stripe_credentials else '' }}" 
+                                           placeholder="sk_live_...">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_user_stripe_secret_live">
+                                                <label class="form-check-label" for="show_user_stripe_secret_live">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-group mt-3 mb-3">
+                                <button type="button" class="btn btn-outline-info btn-sm me-2" id="test_user_stripe_connection_button">
+                                    <i class="bi bi-shield-check"></i> Stripe接続テスト
+                                </button>
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-check-circle"></i> Stripe設定を保存
+                                </button>
+                            </div>
+                            <div id="user_stripe_connection_status" class="mt-2" style="min-height: 20px;"></div>
+                        </form>
+
+                        <hr>
+
+                        <!-- 設定クリア機能 -->
+                        <div class="form-group">
+                            <h6 class="fw-bold mb-3">
+                                <i class="bi bi-trash text-danger"></i> 設定管理
+                            </h6>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-outline-warning btn-sm" id="clear_user_paypal_settings">
+                                    <i class="bi bi-trash"></i> PayPal設定をクリア
+                                </button>
+                                <button type="button" class="btn btn-outline-warning btn-sm" id="clear_user_stripe_settings">
+                                    <i class="bi bi-trash"></i> Stripe設定をクリア
+                                </button>
+                            </div>
+                            <small class="text-muted">設定をクリアすると、システムの全体設定が使用されます。</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Stripe設定セクション -->
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fab fa-stripe text-info"></i> Stripe API 設定 (システム全体)
+                            {% if stripe_status %}
+                            <span class="badge bg-success status-badge float-end">接続済み</span>
+                            {% else %}
+                            <span class="badge bg-warning status-badge float-end">未接続</span>
+                            {% endif %}
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form action="/settings/save_stripe" method="post" id="stripe-settings-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="form-group">
+                                <label for="stripe_mode">
+                                    Stripe環境モード
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="テスト: テスト環境、本番: 実際の決済が発生します"></i>
+                                </label>
+                                <select class="form-select" id="stripe_mode" name="stripe_mode" 
+                                        {% if not is_admin %}disabled{% endif %}>
+                                    <option value="test" {% if stripe_mode == 'test' or not stripe_mode %}selected{% endif %}>テスト</option>
+                                    <option value="live" {% if stripe_mode == 'live' %}selected{% endif %}>本番</option>
+                                </select>
+                                {% if not is_admin %}
+                                <small class="text-muted">環境モードの変更は管理者のみ可能です</small>
+                                {% endif %}
+                                <div class="mt-2">
+                                    <span class="badge {% if stripe_mode == 'live' %}bg-success{% else %}bg-info{% endif %} p-2">
+                                        <i class="bi {% if stripe_mode == 'live' %}bi-lightning-charge{% else %}bi-tools{% endif %}"></i>
+                                        現在: {% if stripe_mode == 'live' %}本番環境{% else %}テスト環境{% endif %}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="stripe_publishable_key">
+                                    Stripe Publishable Key
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="Stripe Dashboardで取得したPublishable Key (pk_で始まる)"></i>
+                                </label>
+                                <input type="text" class="form-control" id="stripe_publishable_key" name="stripe_publishable_key" 
+                                       value="{{ stripe_pk }}" 
+                                       {% if not is_admin and stripe_mode == 'live' %}disabled{% endif %}
+                                       placeholder="pk_test_... または pk_live_...">
+                                {% if not is_admin and stripe_mode == 'live' %}
+                                <small class="text-muted">本番環境のPublishable Keyの変更は管理者のみ可能です</small>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="stripe_secret_key">
+                                    Stripe Secret Key
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="Stripe Dashboardで取得したSecret Key (sk_で始まる)"></i>
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="stripe_secret_key" name="stripe_secret_key" 
+                                           value="{{ stripe_sk }}" 
+                                           {% if not is_admin and stripe_mode == 'live' %}disabled{% endif %}
+                                           placeholder="sk_test_... または sk_live_...">
+                                    <div class="input-group-append">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="show_stripe_secret">
+                                                <label class="form-check-label" for="show_stripe_secret">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% if not is_admin and stripe_mode == 'live' %}
+                                <small class="text-muted">本番環境のSecret Keyの変更は管理者のみ可能です</small>
+                                {% endif %}
+                            </div>
+
+                            <div class="form-group mt-3 mb-3">
+                                <button type="button" class="btn btn-outline-info btn-sm me-2" id="test_stripe_connection_button">
+                                    <i class="bi bi-shield-check"></i> Stripe接続テスト
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="stripe_comprehensive_test_button">
+                                    <i class="bi bi-gear-wide-connected"></i> 包括テスト
+                                </button>
+                                <div id="stripe_connection_status" class="mt-2" style="min-height: 20px;"></div>
+                            </div>
+                            
+                            <hr>
+                            
+                            <div class="form-group">
+                                <label for="default_payment_provider">
+                                    デフォルト決済プロバイダー
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="新しいユーザーがアクセスした時に選択される決済プロバイダー"></i>
+                                </label>
+                                <select class="form-select" id="default_payment_provider" name="default_payment_provider">
+                                    <option value="paypal" {% if config.default_payment_provider == 'paypal' %}selected{% endif %}>PayPal</option>
+                                    <option value="stripe" {% if config.default_payment_provider == 'stripe' %}selected{% endif %}>Stripe</option>
+                                </select>
+                            </div>
+                            
+                            <div class="d-flex justify-content-between align-items-center flex-wrap">
+                                <div>
+                                    <button type="submit" class="btn btn-save text-white me-2">
+                                        <i class="bi bi-check-circle"></i> Stripe設定を保存
+                                    </button>
+                                    <button type="reset" class="btn btn-outline-secondary">
+                                        <i class="bi bi-arrow-clockwise"></i> リセット
+                                    </button>
+                                </div>
+                                
+                                <!-- Stripe設定エクスポート/インポートボタン -->
+                                {% if show_all_settings or show_sandbox_settings %}
+                                <div class="mt-2 mt-md-0">
+                                    <button type="button" class="btn btn-outline-info btn-sm me-2" id="export_stripe_settings_button">
+                                        <i class="bi bi-download"></i> Stripe設定エクスポート
+                                    </button>
+                                    <button type="button" class="btn btn-outline-info btn-sm" id="import_stripe_settings_button">
+                                        <i class="bi bi-upload"></i> Stripe設定インポート
+                                    </button>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 共通設定セクション -->
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-gear"></i> 共通設定
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form action="/settings/save_common" method="post" id="common-settings-form">
+                            <div class="form-group">
+                                <label for="default_currency">デフォルト通貨</label>
+                                <select class="form-select" id="default_currency" name="default_currency">
+                                    <option value="JPY" {% if config.default_currency == 'JPY' %}selected{% endif %}>日本円 (JPY)</option>
+                                    <option value="USD" {% if config.default_currency == 'USD' %}selected{% endif %}>米ドル (USD)</option>
+                                    <option value="EUR" {% if config.default_currency == 'EUR' %}selected{% endif %}>ユーロ (EUR)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="use_ai_ocr">
+                                    AI OCR機能
+                                    <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="AI搭載OCR機能を使用して請求書からの情報抽出精度を向上させます。"></i>
+                                </label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="use_ai_ocr" name="use_ai_ocr" {% if use_ai_ocr %}checked{% endif %}>
+                                    <label class="form-check-label" for="use_ai_ocr">AI OCR機能を有効にする</label>
+                                </div>
+                            </div>
+                            
+                            <div id="ocr_settings" class="{% if not use_ai_ocr %}d-none{% endif %}">
+                                <div class="form-group">
+                                    <label for="ocr_method">OCR方式</label>
+                                    <select class="form-select" id="ocr_method" name="ocr_method">
+                                        <option value="tesseract" {% if ocr_method == 'tesseract' %}selected{% endif %}>Tesseract OCR (ローカル実行)</option>
+                                        <option value="google_vision" {% if ocr_method == 'google_vision' %}selected{% endif %}>Google Cloud Vision API</option>
+                                        <option value="azure_form_recognizer" {% if ocr_method == 'azure_form_recognizer' %}selected{% endif %}>Microsoft Azure Form Recognizer</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="ocr_api_key">
+                                        API キー
+                                        <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                           title="選択したOCR方式のAPIキーを入力してください。Tesseractの場合は不要です。"></i>
+                                    </label>
+                                    <div class="input-group">
+                                        <input type="password" class="form-control" id="ocr_api_key" name="ocr_api_key" 
+                                               value="{{ ocr_api_key }}">
+                                        <div class="input-group-text">
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="show_ocr_api_key">
+                                                <label class="form-check-label" for="show_ocr_api_key">表示</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="ocr_endpoint">
+                                        APIエンドポイント
+                                        <i class="bi bi-info-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                           title="Azure Form RecognizerなどのAPIエンドポイントを入力してください。Google Cloud VisionやTesseractの場合は空欄でかまいません。"></i>
+                                    </label>
+                                    <input type="text" class="form-control" id="ocr_endpoint" name="ocr_endpoint" 
+                                           value="{{ ocr_endpoint }}">
+                                </div>
+                            </div>
+                            
+                            <hr>
+                            
+                            <div class="form-group">
+                                <label for="enable_customer_extraction">顧客名抽出</label>
+                                <select class="form-select" id="enable_customer_extraction" name="enable_customer_extraction">
+                                    <option value="1" {% if config.enable_customer_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if config.enable_customer_extraction == '0' %}selected{% endif %}>無効</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="enable_amount_extraction">請求金額抽出</label>
+                                <select class="form-select" id="enable_amount_extraction" name="enable_amount_extraction">
+                                    <option value="1" {% if config.enable_amount_extraction == '1' %}selected{% endif %}>有効</option>
+                                    <option value="0" {% if config.enable_amount_extraction == '0' %}selected{% endif %}>無効</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="default_amount">金額抽出失敗時のデフォルト額（円）</label>
+                                <input type="number" class="form-control" id="default_amount" name="default_amount" 
+                                       value="{{ config.default_amount|default(1000) }}">
+                            </div>
+                            
+                            <!-- 保存ボタンを設定の下に追加 -->
+                            <div class="form-group mt-4">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-primary btn-save" {% if not is_admin and paypal_mode == 'live' %}disabled{% endif %}>
+                                    <i class="bi bi-save"></i> 設定を保存
+                                </button>
+                                
+                                <!-- エクスポート/インポートボタン -->
+                                {% if show_all_settings or show_sandbox_settings %}
+                                <button type="button" class="btn btn-outline-secondary ms-2" id="export_settings_button">
+                                    <i class="bi bi-download"></i> 設定をエクスポート
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary ms-2" id="import_settings_button">
+                                    <i class="bi bi-upload"></i> 設定をインポート
+                                </button>
+                                {% endif %}
+                                
+                                {% if not is_admin and paypal_mode == 'live' %}
+                                <div class="alert alert-warning mt-3">
+                                    <i class="bi bi-exclamation-triangle-fill"></i> 本番環境の設定は管理者のみ変更できます。サンドボックス環境の設定のみ変更可能です。
+                                </div>
+                                {% endif %}
+                            </div>
+                    </div>
+                </div>
+            </div>
+            
+            </form> <!-- メインフォームの終了タグ -->
+        </div>
+    </div>
+</div>
+
+<!-- 拡張設定セクション -->
+<div class="row mt-4">
+    <div class="col-lg-8">
+        <div class="card settings-card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-sliders"></i> 拡張設定
+                </h5>
+            </div>
+            <div class="card-body">
+                <form action="/settings/save_advanced" method="post" id="advanced-settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <!-- 決済リンク設定 -->
+                    <div class="form-group">
+                        <h6 class="fw-bold mb-3">
+                            <i class="bi bi-link-45deg"></i> 決済リンク設定
+                        </h6>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="payment_link_expire_days">有効期限（日数）</label>
+                                <input type="number" class="form-control" id="payment_link_expire_days" 
+                                       name="payment_link_expire_days" 
+                                       value="{{ config.payment_link_expire_days or 30 }}" 
+                                       min="1" max="365">
+                                <small class="form-text text-muted">1-365日の範囲で設定</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label>&nbsp;</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" 
+                                           id="payment_link_auto_tax" name="payment_link_auto_tax" 
+                                           {% if config.payment_link_auto_tax %}checked{% endif %}>
+                                    <label class="form-check-label" for="payment_link_auto_tax">
+                                        自動税金計算を有効にする
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- セキュリティ設定 -->
+                    <div class="form-group">
+                        <h6 class="fw-bold mb-3">
+                            <i class="bi bi-shield-lock"></i> セキュリティ設定
+                        </h6>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" 
+                                           id="encrypt_api_keys" name="encrypt_api_keys" 
+                                           {% if config.encrypt_api_keys %}checked{% endif %}>
+                                    <label class="form-check-label" for="encrypt_api_keys">
+                                        APIキーの暗号化を有効にする
+                                    </label>
+                                </div>
+                                <small class="form-text text-muted">機密情報をファイルに暗号化して保存</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="api_key_rotation_days">APIキーローテーション（日数）</label>
+                                <input type="number" class="form-control" id="api_key_rotation_days" 
+                                       name="api_key_rotation_days" 
+                                       value="{{ config.api_key_rotation_days or 90 }}" 
+                                       min="30" max="365">
+                                <small class="form-text text-muted">推奨: 90日</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Webhook設定 -->
+                    <div class="form-group">
+                        <h6 class="fw-bold mb-3">
+                            <i class="bi bi-arrow-repeat"></i> Webhook設定
+                        </h6>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" 
+                                           id="webhook_enable_signature_verification" 
+                                           name="webhook_enable_signature_verification" 
+                                           {% if config.webhook_enable_signature_verification %}checked{% endif %}>
+                                    <label class="form-check-label" for="webhook_enable_signature_verification">
+                                        署名検証を有効にする
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="webhook_timeout_seconds">タイムアウト（秒）</label>
+                                <input type="number" class="form-control" id="webhook_timeout_seconds" 
+                                       name="webhook_timeout_seconds" 
+                                       value="{{ config.webhook_timeout_seconds or 30 }}" 
+                                       min="5" max="120">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="webhook_retry_attempts">リトライ回数</label>
+                                <input type="number" class="form-control" id="webhook_retry_attempts" 
+                                       name="webhook_retry_attempts" 
+                                       value="{{ config.webhook_retry_attempts or 3 }}" 
+                                       min="0" max="10">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 通貨設定 -->
+                    <div class="form-group">
+                        <h6 class="fw-bold mb-3">
+                            <i class="bi bi-currency-exchange"></i> 通貨設定
+                        </h6>
+                        
+                        <div class="row">
+                            <div class="col-md-12">
+                                <label for="supported_currencies">サポート通貨</label>
+                                <select class="form-select" id="supported_currencies" name="supported_currencies" multiple>
+                                    <option value="JPY" {% if 'JPY' in (config.supported_currencies or ['JPY']) %}selected{% endif %}>日本円 (JPY)</option>
+                                    <option value="USD" {% if 'USD' in (config.supported_currencies or []) %}selected{% endif %}>米ドル (USD)</option>
+                                    <option value="EUR" {% if 'EUR' in (config.supported_currencies or []) %}selected{% endif %}>ユーロ (EUR)</option>
+                                    <option value="GBP" {% if 'GBP' in (config.supported_currencies or []) %}selected{% endif %}>英ポンド (GBP)</option>
+                                    <option value="AUD" {% if 'AUD' in (config.supported_currencies or []) %}selected{% endif %}>豪ドル (AUD)</option>
+                                    <option value="CAD" {% if 'CAD' in (config.supported_currencies or []) %}selected{% endif %}>加ドル (CAD)</option>
+                                </select>
+                                <small class="form-text text-muted">Ctrl/Cmd + クリックで複数選択</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle"></i> 拡張設定を保存
+                        </button>
+                        
+                        <div>
+                            <button type="button" class="btn btn-outline-warning btn-sm me-2" id="clear_cache_btn">
+                                <i class="bi bi-trash"></i> キャッシュクリア
+                            </button>
+                            <button type="button" class="btn btn-outline-info btn-sm me-2" id="reset_advanced_settings">
+                                <i class="bi bi-arrow-clockwise"></i> デフォルトに戻す
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="validate_all_settings">
+                                <i class="bi bi-check2-square"></i> 全設定検証
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+            <div class="col-lg-4">
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-info-circle"></i> システム情報</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>アプリケーションバージョン:</strong> 1.0.0</p>
+                        <p><strong>最終更新日:</strong> 2025年6月4日</p>
+                        
+                        <hr>
+                        
+                        <h6>API状態</h6>
+                        <div class="api-status">
+                            <p>
+                                <i class="bi {% if paypal_status %}bi-check-circle-fill text-success{% else %}bi-x-circle-fill text-danger{% endif %}"></i>
+                                PayPal API: {% if paypal_status %}接続済み{% else %}未接続{% endif %}
+                            </p>
+                        </div>
+                        
+                        <hr>
+                        
+                        <a href="/settings/export" class="btn btn-sm btn-outline-secondary w-100 mb-2">
+                            <i class="bi bi-download"></i> 設定のエクスポート
+                        </a>
+                        <a href="#" class="btn btn-sm btn-outline-secondary w-100" data-bs-toggle="modal" data-bs-target="#importModal">
+                            <i class="bi bi-upload"></i> 設定のインポート
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="card settings-card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="bi bi-question-circle"></i> ヘルプ</h5>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>PayPal APIキーの取得方法:</strong></p>
+                        <ol>
+                            <li><a href="https://developer.paypal.com/" target="_blank">PayPalデベロッパーポータル</a>にログイン</li>
+                            <li>「Dashboard」から「My Apps & Credentials」を選択</li>
+                            <li>APIキー（Client IDとSecret）を作成または確認</li>
+                        </ol>
+                        
+                        <p><strong>AI OCR APIの取得方法:</strong></p>
+                        <ul>
+                            <li><a href="https://cloud.google.com/vision" target="_blank">Google Cloud Vision API</a> - 高精度な日本語OCR</li>
+                            <li><a href="https://azure.microsoft.com/ja-jp/products/form-recognizer" target="_blank">Azure Form Recognizer</a> - 請求書に特化したAI</li>
+                            <li><a href="https://github.com/tesseract-ocr/tesseract" target="_blank">Tesseract OCR</a> - オープンソース（APIキー不要）</li>
+                        </ul>
+                        
+                        <p><a href="https://github.com/user/pdf-stripe-batch" target="_blank" class="text-decoration-none">
+                            <i class="bi bi-github"></i> プロジェクトリポジトリ
+                        </a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 保存ボタンは設定の下に移動したのでここは削除 -->
+    
+    <!-- インポートモーダル -->
+    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">設定のインポート</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form action="/settings/import" method="post" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label for="settings_file" class="form-label">設定ファイル (.json)</label>
+                            <input class="form-control" type="file" id="settings_file" name="settings_file" accept=".json">
+                        </div>
+                        <div class="text-end">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                            <button type="submit" class="btn btn-primary">インポート</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- インポート用の隠しファイル入力 -->
+    <input type="file" id="import_paypal_file" accept=".json" style="display: none;">
+    <input type="file" id="import_stripe_file" accept=".json" style="display: none;">
+    <input type="file" id="import_all_file" accept=".json" style="display: none;">
+
+    <script>
+        // 通知を表示する関数
+        function showNotification(message, type = 'info') {
+            // 通知コンテナを作成
+            const notificationContainer = document.createElement('div');
+            notificationContainer.className = `alert alert-${type} alert-dismissible fade show notification-toast`;
+            notificationContainer.setAttribute('role', 'alert');
+            notificationContainer.style.position = 'fixed';
+            notificationContainer.style.top = '20px';
+            notificationContainer.style.right = '20px';
+            notificationContainer.style.zIndex = '9999';
+            notificationContainer.style.minWidth = '300px';
+            notificationContainer.style.boxShadow = '0 4px 8px rgba(0,0,0,0.1)';
+            
+            // 通知内容を設定
+            notificationContainer.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            // 通知をページに追加
+            document.body.appendChild(notificationContainer);
+            
+            // 5秒後に自動的に通知を閉じる
+            setTimeout(() => {
+                notificationContainer.classList.remove('show');
+                setTimeout(() => {
+                    document.body.removeChild(notificationContainer);
+                }, 300);
+            }, 5000);
+        }
+        
+        // ツールチップの初期化
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        
+        // PayPal パスワード表示/非表示の切り替え
+        document.getElementById('show_secret').addEventListener('change', function() {
+            var secretField = document.getElementById('paypal_client_secret');
+            secretField.type = this.checked ? 'text' : 'password';
+        });
+        
+        // Stripe Secret Key表示/非表示の切り替え
+        const showStripeSecret = document.getElementById('show_stripe_secret');
+        if (showStripeSecret) {
+            showStripeSecret.addEventListener('change', function() {
+                var secretField = document.getElementById('stripe_secret_key');
+                secretField.type = this.checked ? 'text' : 'password';
+            });
+        }
+        
+        // OCR APIキー表示/非表示の切り替え
+        document.getElementById('show_ocr_api_key').addEventListener('change', function() {
+            var apiKeyField = document.getElementById('ocr_api_key');
+            apiKeyField.type = this.checked ? 'text' : 'password';
+        });
+        
+        // AI OCR設定の表示/非表示切り替え
+        document.getElementById('use_ai_ocr').addEventListener('change', function() {
+            var ocrSettings = document.getElementById('ocr_settings');
+            if (this.checked) {
+                ocrSettings.classList.remove('d-none');
+            } else {
+                ocrSettings.classList.add('d-none');
+            }
+        });
+
+        // PayPal接続テスト
+        document.getElementById('test_paypal_connection_button').addEventListener('click', function() {
+            const button = this;
+            const statusDiv = document.getElementById('paypal_connection_status');
+            const clientId = document.getElementById('paypal_client_id').value;
+            const clientSecret = document.getElementById('paypal_client_secret').value;
+            const mode = document.getElementById('paypal_mode').value;
+            
+            // CSRFトークンを取得（Flaskのテンプレートで自動的に挿入される）
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+            statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
+            button.disabled = true;
+
+            fetch('/settings/test_connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken || ''
+                },
+                body: JSON.stringify({
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                    paypal_mode: mode
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    // Handle HTTP errors (e.g., 400, 500)
+                    return response.json().then(errData => {
+                        throw new Error(errData.message || `サーバーエラー: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // 接続成功時は接続状態を「接続済み」に更新
+                    statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${data.message}</span>`;
+                    
+                    // ステータスバッジを「接続済み」に更新
+                    const statusBadge = document.querySelector('.status-badge');
+                    if (statusBadge) {
+                        statusBadge.className = 'badge bg-success status-badge float-end';
+                        statusBadge.textContent = '接続済み';
+                    }
+                    
+                    // 成功通知を表示
+                    showNotification('PayPal API接続完了しました！', 'success');
+                } else {
+                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${data.message}</span>`;
+                    
+                    // ステータスバッジを「未接続」に更新
+                    const statusBadge = document.querySelector('.status-badge');
+                    if (statusBadge) {
+                        statusBadge.className = 'badge bg-warning status-badge float-end';
+                        statusBadge.textContent = '未接続';
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('PayPal接続テストエラー:', error);
+                statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${error.message || '接続テスト中にエラーが発生しました。'}</span>`;
+            })
+            .finally(() => {
+                button.disabled = false;
+            });
+        });
+        
+        // Stripe接続テスト
+        const testStripeButton = document.getElementById('test_stripe_connection_button');
+        if (testStripeButton) {
+            testStripeButton.addEventListener('click', function() {
+                const button = this;
+                const statusDiv = document.getElementById('stripe_connection_status');
+                const publishableKey = document.getElementById('stripe_publishable_key').value;
+                const secretKey = document.getElementById('stripe_secret_key').value;
+                const mode = document.getElementById('stripe_mode').value;
+                
+                // CSRFトークンを取得
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+                statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
+                button.disabled = true;
+
+                fetch('/settings/test_stripe_connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: JSON.stringify({
+                        publishable_key: publishableKey,
+                        secret_key: secretKey,
+                        stripe_mode: mode
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || `HTTP ${response.status}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${data.message}</span>`;
+                        if (data.details) {
+                            const details = data.details;
+                            let detailsHtml = '<div class="mt-2 small text-muted">';
+                            if (details.account_id) detailsHtml += `<div>アカウントID: ${details.account_id}</div>`;
+                            if (details.country) detailsHtml += `<div>国: ${details.country}</div>`;
+                            if (details.default_currency) detailsHtml += `<div>デフォルト通貨: ${details.default_currency.toUpperCase()}</div>`;
+                            if (details.charges_enabled !== undefined) {
+                                const statusText = details.charges_enabled ? '有効' : '無効';
+                                const testModeNote = details.is_test_mode && !details.raw_charges_enabled ? ' (テスト環境では利用可能)' : '';
+                                detailsHtml += `<div>決済機能: ${statusText}${testModeNote}</div>`;
+                            }
+                            detailsHtml += '</div>';
+                            statusDiv.innerHTML += detailsHtml;
+                        }
+                    } else {
+                        statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${data.message}</span>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Stripe接続テストエラー:', error);
+                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${error.message || '接続テスト中にエラーが発生しました。'}</span>`;
+                })
+                .finally(() => {
+                    button.disabled = false;
+                });
+            });
+        }
+        
+        // デフォルトプロバイダー選択時の警告表示
+        const defaultProviderSelect = document.getElementById('default_payment_provider');
+        if (defaultProviderSelect) {
+            defaultProviderSelect.addEventListener('change', function() {
+                const selectedProvider = this.value;
+                const paypalStatus = {{ paypal_status|tojson }};
+                const stripeStatus = {{ stripe_status|tojson }};
+                
+                let warning = '';
+                if (selectedProvider === 'paypal' && !paypalStatus) {
+                    warning = 'PayPalが設定されていません。先にPayPal設定を完了してください。';
+                } else if (selectedProvider === 'stripe' && !stripeStatus) {
+                    warning = 'Stripeが設定されていません。先にStripe設定を完了してください。';
+                }
+                
+                if (warning) {
+                    showNotification(warning, 'warning');
+                }
+            });
+        }
+        
+        // 設定フォームのJavaScript処理
+        document.getElementById('stripe-settings-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            
+            try {
+                const response = await fetch('/settings/save_stripe', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: formData,
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification('Stripe設定を保存しました', 'success');
+                    } else {
+                        showNotification(result.error || 'Stripe設定の保存に失敗しました', 'danger');
+                    }
+                } else {
+                    const errorData = await response.json();
+                    showNotification(errorData.error || 'サーバーエラーが発生しました', 'danger');
+                }
+            } catch (error) {
+                console.error('Stripe設定保存エラー:', error);
+                showNotification('設定保存中にエラーが発生しました', 'danger');
+            }
+        });
+        
+        // 共通設定フォームのJavaScript処理
+        document.getElementById('common-settings-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            
+            try {
+                const response = await fetch('/settings/save_common', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: formData,
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification('共通設定を保存しました', 'success');
+                    } else {
+                        showNotification(result.error || '共通設定の保存に失敗しました', 'danger');
+                    }
+                } else {
+                    const errorData = await response.json();
+                    showNotification(errorData.error || 'サーバーエラーが発生しました', 'danger');
+                }
+            } catch (error) {
+                console.error('共通設定保存エラー:', error);
+                showNotification('設定保存中にエラーが発生しました', 'danger');
+            }
+        });
+        
+        // 拡張設定フォームのJavaScript処理
+        document.getElementById('advanced-settings-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            
+            try {
+                const response = await fetch('/settings/save_advanced', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: formData,
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification('拡張設定を保存しました', 'success');
+                    } else {
+                        showNotification(result.error || '拡張設定の保存に失敗しました', 'danger');
+                    }
+                } else {
+                    const errorData = await response.json();
+                    showNotification(errorData.error || 'サーバーエラーが発生しました', 'danger');
+                }
+            } catch (error) {
+                console.error('拡張設定保存エラー:', error);
+                showNotification('設定保存中にエラーが発生しました', 'danger');
+            }
+        });
+        
+        // PayPal設定エクスポート
+        const exportPayPalButton = document.getElementById('export_settings_button');
+        if (exportPayPalButton) {
+            exportPayPalButton.addEventListener('click', function() {
+                const config = {
+                    paypal_mode: document.getElementById('paypal_mode').value,
+                    client_id: document.getElementById('paypal_client_id').value,
+                    client_secret: document.getElementById('paypal_client_secret').value,
+                    default_currency: document.getElementById('default_currency')?.value || 'JPY',
+                    export_timestamp: new Date().toISOString(),
+                    export_type: 'paypal_only'
+                };
+                
+                downloadConfig(config, 'paypal_settings.json');
+                showNotification('PayPal設定をエクスポートしました', 'success');
+            });
+        }
+        
+        // Stripe設定エクスポート
+        const exportStripeButton = document.getElementById('export_stripe_settings_button');
+        if (exportStripeButton) {
+            exportStripeButton.addEventListener('click', function() {
+                const config = {
+                    stripe_mode: document.getElementById('stripe_mode').value,
+                    stripe_publishable_key: document.getElementById('stripe_publishable_key').value,
+                    stripe_secret_key: document.getElementById('stripe_secret_key').value,
+                    default_payment_provider: document.getElementById('default_payment_provider')?.value || 'paypal',
+                    export_timestamp: new Date().toISOString(),
+                    export_type: 'stripe_only'
+                };
+                
+                downloadConfig(config, 'stripe_settings.json');
+                showNotification('Stripe設定をエクスポートしました', 'success');
+            });
+        }
+        
+        // PayPal設定インポート
+        const importPayPalButton = document.getElementById('import_settings_button');
+        if (importPayPalButton) {
+            importPayPalButton.addEventListener('click', function() {
+                document.getElementById('import_paypal_file').click();
+            });
+        }
+        
+        // Stripe設定インポート
+        const importStripeButton = document.getElementById('import_stripe_settings_button');
+        if (importStripeButton) {
+            importStripeButton.addEventListener('click', function() {
+                document.getElementById('import_stripe_file').click();
+            });
+        }
+        
+        // PayPalファイル選択時の処理
+        document.getElementById('import_paypal_file').addEventListener('change', function(e) {
+            handleConfigImport(e, 'paypal');
+        });
+        
+        // Stripeファイル選択時の処理
+        document.getElementById('import_stripe_file').addEventListener('change', function(e) {
+            handleConfigImport(e, 'stripe');
+        });
+        
+        // 設定ファイルダウンロード関数
+        function downloadConfig(config, filename) {
+            const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
+        
+        // 設定インポート処理関数
+        function handleConfigImport(event, type) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const config = JSON.parse(e.target.result);
+                    
+                    if (type === 'paypal') {
+                        if (config.client_id) document.getElementById('paypal_client_id').value = config.client_id;
+                        if (config.client_secret) document.getElementById('paypal_client_secret').value = config.client_secret;
+                        if (config.paypal_mode) document.getElementById('paypal_mode').value = config.paypal_mode;
+                        if (config.default_currency && document.getElementById('default_currency')) {
+                            document.getElementById('default_currency').value = config.default_currency;
+                        }
+                        showNotification('PayPal設定をインポートしました。保存ボタンをクリックして設定を適用してください。', 'success');
+                    } else if (type === 'stripe') {
+                        if (config.stripe_publishable_key) document.getElementById('stripe_publishable_key').value = config.stripe_publishable_key;
+                        if (config.stripe_secret_key) document.getElementById('stripe_secret_key').value = config.stripe_secret_key;
+                        if (config.stripe_mode) document.getElementById('stripe_mode').value = config.stripe_mode;
+                        if (config.default_payment_provider && document.getElementById('default_payment_provider')) {
+                            document.getElementById('default_payment_provider').value = config.default_payment_provider;
+                        }
+                        showNotification('Stripe設定をインポートしました。保存ボタンをクリックして設定を適用してください。', 'success');
+                    }
+                    
+                } catch (error) {
+                    console.error('設定インポートエラー:', error);
+                    showNotification('設定ファイルの形式が正しくありません。', 'danger');
+                }
+            };
+            reader.readAsText(file);
+            
+            // ファイル入力をリセット
+            event.target.value = '';
+        }
+        
+        // Stripe包括テスト
+        const stripeComprehensiveTestButton = document.getElementById('stripe_comprehensive_test_button');
+        if (stripeComprehensiveTestButton) {
+            stripeComprehensiveTestButton.addEventListener('click', function() {
+                const button = this;
+                const statusDiv = document.getElementById('stripe_connection_status');
+                
+                button.disabled = true;
+                button.innerHTML = '<i class="spinner-border spinner-border-sm"></i> テスト実行中...';
+                statusDiv.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> Stripe包括テストを実行中...</span>';
+                
+                fetch('/api/stripe/test?format=json', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="bi bi-gear-wide-connected"></i> 包括テスト';
+                    
+                    if (data.overall_success) {
+                        const summary = data.summary;
+                        statusDiv.innerHTML = `
+                            <div class="alert alert-success alert-sm">
+                                <i class="bi bi-check-circle-fill"></i> 
+                                包括テスト完了: ${summary.passed}/${summary.total} 成功 (${summary.success_rate})
+                            </div>
+                        `;
+                    } else {
+                        statusDiv.innerHTML = `
+                            <div class="alert alert-warning alert-sm">
+                                <i class="bi bi-exclamation-triangle-fill"></i> 
+                                包括テストで問題が見つかりました。
+                                <a href="/api/stripe/test" target="_blank" class="alert-link">詳細レポートを確認</a>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="bi bi-gear-wide-connected"></i> 包括テスト';
+                    console.error('Stripe包括テストエラー:', error);
+                    statusDiv.innerHTML = `
+                        <span class="text-danger">
+                            <i class="bi bi-exclamation-triangle-fill"></i> 
+                            包括テスト中にエラーが発生しました: ${error.message || 'ネットワークエラー'}
+                        </span>
+                    `;
+                });
+            });
+        }
+        
+        // 全設定検証
+        const validateAllButton = document.getElementById('validate_all_settings');
+        if (validateAllButton) {
+            validateAllButton.addEventListener('click', function() {
+                const button = this;
+                button.disabled = true;
+                button.innerHTML = '<i class="spinner-border spinner-border-sm"></i> 検証中...';
+                
+                // 現在の設定値を収集
+                const allSettings = {
+                    // PayPal設定
+                    paypal_client_id: document.getElementById('paypal_client_id')?.value || '',
+                    paypal_client_secret: document.getElementById('paypal_client_secret')?.value || '',
+                    paypal_mode: document.getElementById('paypal_mode')?.value || '',
+                    
+                    // Stripe設定
+                    stripe_mode: document.getElementById('stripe_mode')?.value || '',
+                    stripe_secret_key_test: document.getElementById('stripe_secret_key')?.value || '',
+                    stripe_publishable_key_test: document.getElementById('stripe_publishable_key')?.value || '',
+                    
+                    // 共通設定
+                    default_payment_provider: document.getElementById('default_payment_provider')?.value || '',
+                    default_currency: document.getElementById('default_currency')?.value || '',
+                    
+                    // 拡張設定
+                    encrypt_api_keys: document.getElementById('encrypt_api_keys')?.checked || false,
+                    payment_link_expire_days: document.getElementById('payment_link_expire_days')?.value || 30
+                };
+                
+                fetch('/api/config/validate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                    },
+                    body: JSON.stringify(allSettings)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="bi bi-check2-square"></i> 全設定検証';
+                    
+                    let alertClass = data.valid ? 'alert-success' : 'alert-warning';
+                    let icon = data.valid ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill';
+                    let message = data.valid ? '全ての設定が正常です' : '設定に問題があります';
+                    
+                    let detailsHtml = '';
+                    if (data.errors && data.errors.length > 0) {
+                        detailsHtml += '<div class="mt-2"><strong>エラー:</strong><ul class="mb-0">';
+                        data.errors.forEach(error => {
+                            detailsHtml += `<li>${error}</li>`;
+                        });
+                        detailsHtml += '</ul></div>';
+                    }
+                    
+                    if (data.warnings && data.warnings.length > 0) {
+                        detailsHtml += '<div class="mt-2"><strong>警告:</strong><ul class="mb-0">';
+                        data.warnings.forEach(warning => {
+                            detailsHtml += `<li>${warning}</li>`;
+                        });
+                        detailsHtml += '</ul></div>';
+                    }
+                    
+                    // 検証結果を一時的に表示
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = `alert ${alertClass} alert-dismissible fade show`;
+                    alertDiv.innerHTML = `
+                        <i class="bi ${icon}"></i> ${message}
+                        ${detailsHtml}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    `;
+                    
+                    // 拡張設定フォームの前に挿入
+                    const form = document.getElementById('advanced-settings-form');
+                    form.parentNode.insertBefore(alertDiv, form);
+                    
+                    // 10秒後に自動で消す
+                    setTimeout(() => {
+                        if (alertDiv.parentNode) {
+                            alertDiv.remove();
+                        }
+                    }, 10000);
+                })
+                .catch(error => {
+                    button.disabled = false;
+                    button.innerHTML = '<i class="bi bi-check2-square"></i> 全設定検証';
+                    console.error('設定検証エラー:', error);
+                    showNotification('設定検証中にエラーが発生しました', 'error');
+                });
+            });
+        }
+        
+        // キャッシュクリア機能
+        const clearCacheButton = document.getElementById('clear_cache_btn');
+        if (clearCacheButton) {
+            clearCacheButton.addEventListener('click', function() {
+                const button = this;
+                
+                if (confirm('処理キャッシュをクリアしますか？\\n\\n注意: 次回PDF処理時に新しい決済プロバイダー設定が反映されます。')) {
+                    button.disabled = true;
+                    button.innerHTML = '<i class="spinner-border spinner-border-sm"></i> クリア中...';
+                    
+                    fetch('/api/clear_cache', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': document.querySelector('meta[name=csrf-token]').getAttribute('content')
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        button.disabled = false;
+                        button.innerHTML = '<i class="bi bi-trash"></i> キャッシュクリア';
+                        
+                        if (data.success) {
+                            showNotification('キャッシュが正常にクリアされました', 'success');
+                        } else {
+                            showNotification('キャッシュクリアに失敗しました: ' + data.error, 'error');
+                        }
+                    })
+                    .catch(error => {
+                        button.disabled = false;
+                        button.innerHTML = '<i class="bi bi-trash"></i> キャッシュクリア';
+                        console.error('キャッシュクリアエラー:', error);
+                        showNotification('キャッシュクリア中にエラーが発生しました', 'error');
+                    });
+                }
+            });
+        }
+        
+        // デフォルト設定リセット
+        const resetAdvancedButton = document.getElementById('reset_advanced_settings');
+        if (resetAdvancedButton) {
+            resetAdvancedButton.addEventListener('click', function() {
+                if (confirm('拡張設定をデフォルト値にリセットしますか？\\n\\n注意: この操作は元に戻せません。')) {
+                    // デフォルト値を設定
+                    document.getElementById('payment_link_expire_days').value = 30;
+                    document.getElementById('payment_link_auto_tax').checked = false;
+                    document.getElementById('encrypt_api_keys').checked = true;
+                    document.getElementById('api_key_rotation_days').value = 90;
+                    document.getElementById('webhook_enable_signature_verification').checked = true;
+                    document.getElementById('webhook_timeout_seconds').value = 30;
+                    document.getElementById('webhook_retry_attempts').value = 3;
+                    
+                    // サポート通貨をJPYのみに設定
+                    const currencySelect = document.getElementById('supported_currencies');
+                    for (let option of currencySelect.options) {
+                        option.selected = option.value === 'JPY';
+                    }
+                    
+                    showNotification('拡張設定をデフォルト値にリセットしました', 'info');
+                }
+            });
+        }
+        
+        // ユーザー専用PayPal パスワード表示/非表示の切り替え
+        const showUserPayPalSecret = document.getElementById('show_user_paypal_secret');
+        if (showUserPayPalSecret) {
+            showUserPayPalSecret.addEventListener('change', function() {
+                var secretField = document.getElementById('user_paypal_client_secret');
+                secretField.type = this.checked ? 'text' : 'password';
+            });
+        }
+        
+        // ユーザー専用Stripe Secret Key表示/非表示の切り替え (テスト)
+        const showUserStripeSecretTest = document.getElementById('show_user_stripe_secret_test');
+        if (showUserStripeSecretTest) {
+            showUserStripeSecretTest.addEventListener('change', function() {
+                var secretField = document.getElementById('user_stripe_secret_key_test');
+                secretField.type = this.checked ? 'text' : 'password';
+            });
+        }
+        
+        // ユーザー専用Stripe Secret Key表示/非表示の切り替え (本番)
+        const showUserStripeSecretLive = document.getElementById('show_user_stripe_secret_live');
+        if (showUserStripeSecretLive) {
+            showUserStripeSecretLive.addEventListener('change', function() {
+                var secretField = document.getElementById('user_stripe_secret_key_live');
+                secretField.type = this.checked ? 'text' : 'password';
+            });
+        }
+
+        // ユーザー専用PayPal接続テスト
+        const testUserPayPalButton = document.getElementById('test_user_paypal_connection_button');
+        if (testUserPayPalButton) {
+            testUserPayPalButton.addEventListener('click', function() {
+                const button = this;
+                const statusDiv = document.getElementById('user_paypal_connection_status');
+                const clientId = document.getElementById('user_paypal_client_id').value;
+                const clientSecret = document.getElementById('user_paypal_client_secret').value;
+                const mode = document.getElementById('user_paypal_mode').value;
+                
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+                statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
+                button.disabled = true;
+
+                fetch('/settings/test_user_paypal_connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: JSON.stringify({
+                        client_id: clientId,
+                        client_secret: clientSecret,
+                        paypal_mode: mode
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(errData => {
+                            throw new Error(errData.message || `サーバーエラー: ${response.status}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${data.message}</span>`;
+                        showNotification('ユーザー専用PayPal API接続が完了しました！', 'success');
+                    } else {
+                        statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${data.message}</span>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('ユーザー専用PayPal接続テストエラー:', error);
+                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${error.message || '接続テスト中にエラーが発生しました。'}</span>`;
+                })
+                .finally(() => {
+                    button.disabled = false;
+                });
+            });
+        }
+
+        // ユーザー専用Stripe接続テスト
+        const testUserStripeButton = document.getElementById('test_user_stripe_connection_button');
+        if (testUserStripeButton) {
+            testUserStripeButton.addEventListener('click', function() {
+                const button = this;
+                const statusDiv = document.getElementById('user_stripe_connection_status');
+                const mode = document.getElementById('user_stripe_mode').value;
+                
+                // モードに応じてキーを取得
+                let publishableKey, secretKey;
+                if (mode === 'test') {
+                    publishableKey = document.getElementById('user_stripe_publishable_key_test').value;
+                    secretKey = document.getElementById('user_stripe_secret_key_test').value;
+                } else {
+                    publishableKey = document.getElementById('user_stripe_publishable_key_live').value;
+                    secretKey = document.getElementById('user_stripe_secret_key_live').value;
+                }
+                
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+                statusDiv.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-repeat"></i> テスト中...</span>';
+                button.disabled = true;
+
+                fetch('/settings/test_user_stripe_connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken || ''
+                    },
+                    body: JSON.stringify({
+                        publishable_key: publishableKey,
+                        secret_key: secretKey,
+                        stripe_mode: mode
+                    })
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || `HTTP ${response.status}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-circle-fill"></i> ${data.message}</span>`;
+                        if (data.details) {
+                            const details = data.details;
+                            let detailsHtml = '<div class="mt-2 small text-muted">';
+                            if (details.account_id) detailsHtml += `<div>アカウントID: ${details.account_id}</div>`;
+                            if (details.country) detailsHtml += `<div>国: ${details.country}</div>`;
+                            if (details.default_currency) detailsHtml += `<div>デフォルト通貨: ${details.default_currency.toUpperCase()}</div>`;
+                            if (details.charges_enabled !== undefined) {
+                                const statusText = details.charges_enabled ? '有効' : '無効';
+                                const testModeNote = details.is_test_mode && !details.raw_charges_enabled ? ' (テスト環境では利用可能)' : '';
+                                detailsHtml += `<div>決済機能: ${statusText}${testModeNote}</div>`;
+                            }
+                            detailsHtml += '</div>';
+                            statusDiv.innerHTML += detailsHtml;
+                        }
+                        showNotification('ユーザー専用Stripe API接続が完了しました！', 'success');
+                    } else {
+                        statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${data.message}</span>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('ユーザー専用Stripe接続テストエラー:', error);
+                    statusDiv.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> ${error.message || '接続テスト中にエラーが発生しました。'}</span>`;
+                })
+                .finally(() => {
+                    button.disabled = false;
+                });
+            });
+        }
+
+        // ユーザー専用PayPal設定フォーム送信
+        const userPayPalForm = document.getElementById('user-paypal-settings-form');
+        if (userPayPalForm) {
+            userPayPalForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                
+                try {
+                    const response = await fetch('/settings/save_user_payment_provider', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': csrfToken || ''
+                        },
+                        body: formData,
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            showNotification('PayPal設定を保存しました', 'success');
+                        } else {
+                            showNotification(result.error || 'PayPal設定の保存に失敗しました', 'danger');
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        showNotification(errorData.error || 'サーバーエラーが発生しました', 'danger');
+                    }
+                } catch (error) {
+                    console.error('PayPal設定保存エラー:', error);
+                    showNotification('設定保存中にエラーが発生しました', 'danger');
+                }
+            });
+        }
+
+        // ユーザー専用Stripe設定フォーム送信
+        const userStripeForm = document.getElementById('user-stripe-settings-form');
+        if (userStripeForm) {
+            userStripeForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                
+                try {
+                    const response = await fetch('/settings/save_user_payment_provider', {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': csrfToken || ''
+                        },
+                        body: formData,
+                        credentials: 'include'
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            showNotification('Stripe設定を保存しました', 'success');
+                        } else {
+                            showNotification(result.error || 'Stripe設定の保存に失敗しました', 'danger');
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        showNotification(errorData.error || 'サーバーエラーが発生しました', 'danger');
+                    }
+                } catch (error) {
+                    console.error('Stripe設定保存エラー:', error);
+                    showNotification('設定保存中にエラーが発生しました', 'danger');
+                }
+            });
+        }
+
+        // ユーザー専用PayPal設定クリア
+        const clearUserPayPalButton = document.getElementById('clear_user_paypal_settings');
+        if (clearUserPayPalButton) {
+            clearUserPayPalButton.addEventListener('click', function() {
+                if (confirm('PayPal設定をクリアしますか？\\n\\nクリア後はシステムの全体設定が使用されます。')) {
+                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                    
+                    fetch('/settings/clear_user_payment_provider', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken || ''
+                        },
+                        body: JSON.stringify({
+                            provider_name: 'paypal'
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showNotification('PayPal設定をクリアしました', 'success');
+                            // フォームをクリア
+                            document.getElementById('user_paypal_client_id').value = '';
+                            document.getElementById('user_paypal_client_secret').value = '';
+                            document.getElementById('user_paypal_mode').value = 'sandbox';
+                        } else {
+                            showNotification(data.error || 'PayPal設定のクリアに失敗しました', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('PayPal設定クリアエラー:', error);
+                        showNotification('設定クリア中にエラーが発生しました', 'danger');
+                    });
+                }
+            });
+        }
+
+        // ユーザー専用Stripe設定クリア
+        const clearUserStripeButton = document.getElementById('clear_user_stripe_settings');
+        if (clearUserStripeButton) {
+            clearUserStripeButton.addEventListener('click', function() {
+                if (confirm('Stripe設定をクリアしますか？\\n\\nクリア後はシステムの全体設定が使用されます。')) {
+                    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                    
+                    fetch('/settings/clear_user_payment_provider', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrfToken || ''
+                        },
+                        body: JSON.stringify({
+                            provider_name: 'stripe'
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showNotification('Stripe設定をクリアしました', 'success');
+                            // フォームをクリア
+                            document.getElementById('user_stripe_publishable_key_test').value = '';
+                            document.getElementById('user_stripe_secret_key_test').value = '';
+                            document.getElementById('user_stripe_publishable_key_live').value = '';
+                            document.getElementById('user_stripe_secret_key_live').value = '';
+                            document.getElementById('user_stripe_mode').value = 'test';
+                        } else {
+                            showNotification(data.error || 'Stripe設定のクリアに失敗しました', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Stripe設定クリアエラー:', error);
+                        showNotification('設定クリア中にエラーが発生しました', 'danger');
+                    });
+                }
+            });
+        }
+    </script>
+</body>
+</html>

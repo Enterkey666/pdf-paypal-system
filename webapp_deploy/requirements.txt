@@ -1,0 +1,31 @@
+# PDF-PayPal-Stripe システム App Engine用依存関係（軽量版）
+
+# コアWebフレームワーク
+Flask>=2.2.5
+Werkzeug>=2.2.3
+Flask-WTF>=1.1.1
+Flask-Login>=0.6.2
+WTForms>=3.0.1
+
+# 決済システム
+stripe>=5.0.0
+paypalrestsdk>=1.13.1
+
+# PDF・文書処理（軽量版）
+pdfplumber>=0.9.0
+PyPDF2>=3.0.1
+
+# 画像処理
+Pillow>=10.0.0
+
+# HTTP・API通信
+requests>=2.31.0
+
+# セキュリティ・暗号化
+cryptography>=41.0.0
+
+# 環境変数管理
+python-dotenv>=1.0.0
+
+# 日時処理
+python-dateutil>=2.8.2

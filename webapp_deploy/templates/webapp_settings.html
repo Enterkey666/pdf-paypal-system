@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>設定 - {{ config.app_title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .settings-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        .form-control {
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+            transition: border-color 0.3s ease;
+        }
+        .form-control:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        .btn-primary {
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            border: none;
+            border-radius: 10px;
+            padding: 12px 30px;
+            font-weight: 600;
+        }
+        .btn-success {
+            background: linear-gradient(45deg, #28a745, #20c997);
+            border: none;
+            border-radius: 10px;
+        }
+        .mode-badge {
+            font-size: 0.8rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+        }
+        .test-result {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: rgba(0, 0, 0, 0.1);">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
+                <i class="bi bi-file-earmark-pdf"></i> {{ config.app_title }}
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="{{ url_for('index') }}">
+                    <i class="bi bi-house"></i> ホーム
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="settings-card p-5">
+                    <div class="text-center mb-5">
+                        <h1 class="display-6 fw-bold text-primary mb-3">
+                            <i class="bi bi-gear me-2"></i>システム設定
+                        </h1>
+                        <p class="lead text-muted">
+                            PayPal・Stripe設定とアプリケーション設定を行ってください
+                        </p>
+                    </div>
+
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% if messages %}
+                            {% for category, message in messages %}
+                                <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show" role="alert">
+                                    {{ message }}
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    {% endwith %}
+
+                    <form method="POST" action="{{ url_for('save_settings') }}" id="settingsForm">
+                        <!-- 決済プロバイダー選択 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-credit-card me-2"></i>決済プロバイダー選択
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-12 mb-3">
+                                        <label for="payment_provider" class="form-label">使用する決済サービス</label>
+                                        <select class="form-control" id="payment_provider" name="payment_provider">
+                                            <option value="paypal" {% if config.payment_provider == 'paypal' %}selected{% endif %}>
+                                                PayPalのみ
+                                            </option>
+                                            <option value="stripe" {% if config.payment_provider == 'stripe' %}selected{% endif %}>
+                                                Stripeのみ
+                                            </option>
+                                            <option value="both" {% if config.payment_provider == 'both' %}selected{% endif %}>
+                                                PayPal・Stripe両方対応
+                                            </option>
+                                        </select>
+                                        <div class="form-text">PDFアップロード時に選択した決済サービスで決済リンクを生成します</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PayPal設定 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-paypal me-2"></i>PayPal API設定
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="paypal_client_id" class="form-label">
+                                            クライアントID <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="text" class="form-control" id="paypal_client_id" 
+                                               name="paypal_client_id" value="{{ config.paypal_client_id }}" 
+                                               placeholder="PayPalクライアントIDを入力" required>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="paypal_client_secret" class="form-label">
+                                            クライアントシークレット <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="password" class="form-control" id="paypal_client_secret" 
+                                               name="paypal_client_secret" value="{{ config.paypal_client_secret }}" 
+                                               placeholder="PayPalクライアントシークレットを入力" required>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="paypal_mode" class="form-label">動作モード</label>
+                                        <select class="form-control" id="paypal_mode" name="paypal_mode">
+                                            <option value="sandbox" {% if config.paypal_mode == 'sandbox' %}selected{% endif %}>
+                                                Sandbox (テスト環境)
+                                            </option>
+                                            <option value="live" {% if config.paypal_mode == 'live' %}selected{% endif %}>
+                                                Live (本番環境)
+                                            </option>
+                                        </select>
+                                        <span class="mode-badge bg-info text-white" id="modeBadge">
+                                            テスト環境
+                                        </span>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">接続テスト</label><br>
+                                        <button type="button" class="btn btn-success" id="testBtn">
+                                            <i class="bi bi-check-circle me-2"></i>接続テスト
+                                        </button>
+                                        <div id="testResult" class="test-result"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stripe設定 -->
+                        <div class="card mb-4" id="stripeSettings">
+                            <div class="card-header" style="background-color: #635bff; color: white;">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-stripe me-2"></i>Stripe API設定
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="stripe_secret_key" class="form-label">
+                                            秘密キー (Secret Key) <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="password" class="form-control" id="stripe_secret_key" 
+                                               name="stripe_secret_key" value="{{ config.stripe_secret_key }}" 
+                                               placeholder="sk_test_... または sk_live_...">
+                                        <div class="form-text">サーバーサイドで使用される秘密キー</div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="stripe_publishable_key" class="form-label">
+                                            公開キー (Publishable Key)
+                                        </label>
+                                        <input type="text" class="form-control" id="stripe_publishable_key" 
+                                               name="stripe_publishable_key" value="{{ config.stripe_publishable_key }}" 
+                                               placeholder="pk_test_... または pk_live_...">
+                                        <div class="form-text">フロントエンドで使用される公開キー（オプション）</div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">Stripe環境</label><br>
+                                        <span id="stripeModeBadge" class="mode-badge bg-info text-white">
+                                            テスト環境
+                                        </span>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">接続テスト</label><br>
+                                        <button type="button" class="btn btn-success" id="stripeTestBtn">
+                                            <i class="bi bi-check-circle me-2"></i>Stripe接続テスト
+                                        </button>
+                                        <div id="stripeTestResult" class="test-result"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- アプリケーション設定 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-app me-2"></i>アプリケーション設定
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8 mb-3">
+                                        <label for="app_title" class="form-label">アプリケーションタイトル</label>
+                                        <input type="text" class="form-control" id="app_title" 
+                                               name="app_title" value="{{ config.app_title }}" 
+                                               placeholder="アプリケーションのタイトル">
+                                    </div>
+                                    <div class="col-md-4 mb-3">
+                                        <label for="currency" class="form-label">通貨</label>
+                                        <select class="form-control" id="currency" name="currency">
+                                            <option value="JPY" {% if config.currency == 'JPY' %}selected{% endif %}>JPY (日本円)</option>
+                                            <option value="USD" {% if config.currency == 'USD' %}selected{% endif %}>USD (米ドル)</option>
+                                            <option value="EUR" {% if config.currency == 'EUR' %}selected{% endif %}>EUR (ユーロ)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="default_amount" class="form-label">デフォルト金額</label>
+                                        <input type="number" class="form-control" id="default_amount" 
+                                               name="default_amount" value="{{ config.default_amount }}" 
+                                               min="1" placeholder="1000">
+                                        <div class="form-text">PDFから金額を抽出できない場合のデフォルト値</div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="admin_password" class="form-label">管理者パスワード</label>
+                                        <input type="password" class="form-control" id="admin_password" 
+                                               name="admin_password" placeholder="新しいパスワードを入力（変更時のみ）">
+                                        <div class="form-text">空欄の場合は変更されません</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="text-center">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-lg me-2"></i>設定を保存
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 決済プロバイダー選択による表示制御
+        const providerSelect = document.getElementById('payment_provider');
+        
+        function updateProviderVisibility() {
+            const provider = providerSelect.value;
+            
+            // PayPalカードを安全に特定
+            const paypalField = document.getElementById('paypal_client_id');
+            const paypalCard = paypalField ? paypalField.closest('.card') : null;
+            
+            // Stripeカードを特定
+            const stripeCard = document.getElementById('stripeSettings');
+            
+            console.log('Provider:', provider);
+            console.log('PayPal card:', paypalCard);
+            console.log('Stripe card:', stripeCard);
+            
+            if (provider === 'paypal') {
+                if (paypalCard) paypalCard.style.display = 'block';
+                if (stripeCard) stripeCard.style.display = 'none';
+            } else if (provider === 'stripe') {
+                if (paypalCard) paypalCard.style.display = 'none';
+                if (stripeCard) stripeCard.style.display = 'block';
+            } else { // both
+                if (paypalCard) paypalCard.style.display = 'block';
+                if (stripeCard) stripeCard.style.display = 'block';
+            }
+        }
+        
+        if (providerSelect) {
+            providerSelect.addEventListener('change', updateProviderVisibility);
+            // 初期表示を設定
+            updateProviderVisibility();
+        } else {
+            console.error('payment_provider select not found');
+        }
+
+        // PayPalモードバッジの更新
+        const modeSelect = document.getElementById('paypal_mode');
+        const modeBadge = document.getElementById('modeBadge');
+        
+        function updateModeBadge() {
+            if (modeSelect.value === 'sandbox') {
+                modeBadge.textContent = 'テスト環境';
+                modeBadge.className = 'mode-badge bg-info text-white';
+            } else {
+                modeBadge.textContent = '本番環境';
+                modeBadge.className = 'mode-badge bg-danger text-white';
+            }
+        }
+        
+        modeSelect.addEventListener('change', updateModeBadge);
+        updateModeBadge();
+
+        // Stripeモードバッジの更新
+        const stripeSecretInput = document.getElementById('stripe_secret_key');
+        const stripeModeBadge = document.getElementById('stripeModeBadge');
+        
+        function updateStripeModeBadge() {
+            const secretKey = stripeSecretInput.value;
+            if (secretKey.startsWith('sk_test_')) {
+                stripeModeBadge.textContent = 'テスト環境';
+                stripeModeBadge.className = 'mode-badge bg-info text-white';
+            } else if (secretKey.startsWith('sk_live_')) {
+                stripeModeBadge.textContent = '本番環境';
+                stripeModeBadge.className = 'mode-badge bg-danger text-white';
+            } else {
+                stripeModeBadge.textContent = '未設定';
+                stripeModeBadge.className = 'mode-badge bg-secondary text-white';
+            }
+        }
+        
+        stripeSecretInput.addEventListener('input', updateStripeModeBadge);
+        updateStripeModeBadge();
+
+        // 接続テスト
+        document.getElementById('testBtn').addEventListener('click', function() {
+            const clientId = document.getElementById('paypal_client_id').value;
+            const clientSecret = document.getElementById('paypal_client_secret').value;
+            const mode = document.getElementById('paypal_mode').value;
+            const testResult = document.getElementById('testResult');
+            
+            if (!clientId || !clientSecret) {
+                testResult.className = 'test-result alert alert-warning';
+                testResult.textContent = 'クライアントIDとシークレットを入力してください';
+                testResult.style.display = 'block';
+                return;
+            }
+
+            this.disabled = true;
+            this.innerHTML = '<i class="bi bi-arrow-repeat spinner-border spinner-border-sm me-2"></i>テスト中...';
+            
+            const formData = new FormData();
+            formData.append('paypal_client_id', clientId);
+            formData.append('paypal_client_secret', clientSecret);
+            formData.append('paypal_mode', mode);
+            
+            fetch('{{ url_for("test_connection") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    testResult.className = 'test-result alert alert-success';
+                    testResult.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + data.message;
+                } else {
+                    testResult.className = 'test-result alert alert-danger';
+                    testResult.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + data.message;
+                }
+                testResult.style.display = 'block';
+            })
+            .catch(error => {
+                testResult.className = 'test-result alert alert-danger';
+                testResult.innerHTML = '<i class="bi bi-x-circle me-2"></i>テストに失敗しました: ' + error.message;
+                testResult.style.display = 'block';
+            })
+            .finally(() => {
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-check-circle me-2"></i>接続テスト';
+            });
+        });
+
+        // Stripe接続テスト
+        document.getElementById('stripeTestBtn').addEventListener('click', function() {
+            const secretKey = document.getElementById('stripe_secret_key').value;
+            const testResult = document.getElementById('stripeTestResult');
+            
+            if (!secretKey) {
+                testResult.className = 'test-result alert alert-warning';
+                testResult.textContent = 'Stripe秘密キーを入力してください';
+                testResult.style.display = 'block';
+                return;
+            }
+
+            this.disabled = true;
+            this.innerHTML = '<i class="bi bi-arrow-repeat spinner-border spinner-border-sm me-2"></i>テスト中...';
+            
+            const formData = new FormData();
+            formData.append('stripe_secret_key', secretKey);
+            
+            fetch('{{ url_for("test_stripe_connection") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    testResult.className = 'test-result alert alert-success';
+                    testResult.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + data.message;
+                } else {
+                    testResult.className = 'test-result alert alert-danger';
+                    testResult.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + data.message;
+                }
+                testResult.style.display = 'block';
+            })
+            .catch(error => {
+                testResult.className = 'test-result alert alert-danger';
+                testResult.innerHTML = '<i class="bi bi-x-circle me-2"></i>テストに失敗しました: ' + error.message;
+                testResult.style.display = 'block';
+            })
+            .finally(() => {
+                this.disabled = false;
+                this.innerHTML = '<i class="bi bi-check-circle me-2"></i>Stripe接続テスト';
+            });
+        });
+    </script>
+</body>
+</html>
