@@ -130,9 +130,28 @@ def setup_logger():
     logger.setLevel(logging.INFO)
     
     # ファイルハンドラの設定
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    # App EngineとCloud Runでは/tmpディレクトリのみ書き込み可能
+    use_tmp_dir = False
+    
+    # App Engine環境の検出
+    if os.environ.get('GAE_ENV', '').startswith('standard'):
+        use_tmp_dir = True
+    # Google Cloud環境の検出（Cloud Runなど）
+    elif os.environ.get('GOOGLE_CLOUD', '').lower() == 'true':
+        use_tmp_dir = True
+    # USE_TEMP_DIR環境変数による明示的な設定
+    elif os.environ.get('USE_TEMP_DIR', '').lower() == 'true':
+        use_tmp_dir = True
+        
+    base_dir = '/tmp' if use_tmp_dir else os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(base_dir, 'logs')
     os.makedirs(log_dir, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(log_dir, 'app.log'), encoding='utf-8')
+    
+    # ログファイルパスをログに記録
+    log_file_path = os.path.join(log_dir, 'app.log')
+    print(f"ログファイルパス: {log_file_path}")
+    
+    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
     
     # UTF-8対応コンソールハンドラの設定
@@ -985,11 +1004,13 @@ except ImportError:
     PYTESSERACT_AVAILABLE = False
 
 # ロガー設定
+# App Engineでは/tmpディレクトリのみ書き込み可能
+log_dir = '/tmp' if os.environ.get('GAE_ENV', '').startswith('standard') else os.path.dirname(os.path.abspath(__file__))
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app.log')),
+        logging.FileHandler(os.path.join(log_dir, 'app.log')),
         logging.StreamHandler()
     ]
 )
@@ -1353,8 +1374,10 @@ try:
     from interactive_correction import CorrectionHistory, LearningData
     
     # ディレクトリの設定
-    history_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'correction_history')
-    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'learning_data')
+    # App Engineでは/tmpディレクトリのみ書き込み可能
+    base_dir = '/tmp' if os.environ.get('GAE_ENV', '').startswith('standard') else os.path.dirname(os.path.abspath(__file__))
+    history_dir = os.path.join(base_dir, 'data', 'correction_history')
+    data_dir = os.path.join(base_dir, 'data', 'learning_data')
     os.makedirs(history_dir, exist_ok=True)
     os.makedirs(data_dir, exist_ok=True)
     

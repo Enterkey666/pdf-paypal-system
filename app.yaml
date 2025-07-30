@@ -46,8 +46,6 @@ handlers:
     secure: always
 
 # セッション設定
-includes:
-  - default.yaml
 
 # ヘルスチェック設定
 liveness_check:

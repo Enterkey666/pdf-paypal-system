@@ -126,7 +126,7 @@ def process_payment_completed(event_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def save_payment_completion(payment_info: Dict[str, Any]) -> Dict[str, Any]:
     """
-    支払い完了情報をデータベースに保存
+    支払い完了情報をデータベースに保存し、決済履歴JSONファイルも更新する
     
     Args:
         payment_info (Dict[str, Any]): 支払い情報
@@ -137,6 +137,7 @@ def save_payment_completion(payment_info: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # データベース接続（既存のdatabase.pyを使用）
         import database
+        from payment_status_updater import update_payment_status
         
         conn = database.get_db_connection()
         cursor = conn.cursor()
@@ -171,17 +172,41 @@ def save_payment_completion(payment_info: Dict[str, Any]) -> Dict[str, Any]:
         ))
         
         conn.commit()
+        
+        # 決済履歴JSONファイルの更新
+        order_id = payment_info.get('session_id') or payment_info.get('payment_intent_id')
+        if order_id:
+            # 支払いステータスを「COMPLETED」に更新
+            status_update_success, message = update_payment_status(order_id, 'COMPLETED')
+            logger.info(f"決済履歴JSONファイル更新: 成功={status_update_success}, メッセージ={message}, オーダーID={order_id}")
+            
+            # 処理履歴テーブルからこのオーダーIDに関連する履歴を検索
+            cursor.execute(
+                "SELECT * FROM processing_history WHERE paypal_link LIKE ?",
+                (f"%{order_id}%",)
+            )
+            history = cursor.fetchone()
+            
+            if history:
+                logger.info(f"関連する処理履歴を発見: ID={history['id']}, ファイル名={history['filename']}")
+            else:
+                logger.warning(f"オーダーID {order_id} に関連する処理履歴が見つかりませんでした")
+        else:
+            logger.warning("オーダーIDが取得できないため、決済履歴JSONファイルを更新できません")
+        
         conn.close()
         
         logger.info(f"Stripe支払い情報をデータベースに保存しました: {payment_info}")
         
         return {
             'success': True,
-            'message': 'データベースに正常に保存されました'
+            'message': 'データベースに正常に保存され、決済履歴も更新されました'
         }
         
     except Exception as e:
         logger.error(f"支払い情報保存エラー: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             'success': False,
             'message': f'データベース保存エラー: {str(e)}'

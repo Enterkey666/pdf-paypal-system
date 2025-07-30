@@ -1,3 +1,7 @@
+# App Engine entry point - import Flask application
+from app import application as app
+
+# Original imports for standalone script functionality
 import os
 import pdfplumber
 import requests
